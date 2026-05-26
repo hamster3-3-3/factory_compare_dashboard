@@ -213,6 +213,7 @@
               <option value="all">全部</option>
               <option value="shared">共用類</option>
               <option value="nonShared">非共用類</option>
+              <option value="common">兩廠共同</option>
             </select>
             <select id="jinxinTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
@@ -239,6 +240,7 @@
               <option value="all">全部</option>
               <option value="shared">共用類</option>
               <option value="nonShared">非共用類</option>
+              <option value="common">兩廠共同</option>
             </select>
             <select id="daxiTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
@@ -767,7 +769,7 @@ function getNeededMonthKeys(){
   return [];
 }
 
-async function loadFactoryFiles(key, files){
+async async function loadFactoryFiles(key, files){
   const factory = FACTORIES[key];
   const target = state.factories[key];
   const todo = (files || []).filter(p => !target.loadedFiles.has(p) && !target.loadingFiles.has(p));
@@ -1214,12 +1216,32 @@ function isSharedRow(r){
   return p === "共用類" || s.includes("共用類");
 }
 
-function aggregateTop(details, metric, classFilter="all"){
+function normalizeCommonProductName(name){
+  return safeStr(name)
+    .replace(/\u3000/g, " ")
+    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")   // 例：健身G肉餐盒(113年) → 健身G肉餐盒
+    .replace(/[（(]\s*20\d{2}\s*[）)]/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+}
+
+function makeCommonProductSet(jinxinRows, daxiRows){
+  const j = new Set((jinxinRows || []).map(r => normalizeCommonProductName(r.product)).filter(Boolean));
+  const d = new Set((daxiRows || []).map(r => normalizeCommonProductName(r.product)).filter(Boolean));
+  const out = new Set();
+  for (const k of j) if (d.has(k)) out.add(k);
+  return out;
+}
+
+function aggregateTop(details, metric, classFilter="all", commonSet=null){
   const m = new Map();
   for (const r of details){
     const shared = isSharedRow(r);
+    const commonKey = normalizeCommonProductName(r.product);
+
     if (classFilter === "shared" && !shared) continue;
     if (classFilter === "nonShared" && shared) continue;
+    if (classFilter === "common" && (!commonKey || !commonSet || !commonSet.has(commonKey))) continue;
 
     const key = `${r.product}||${r.semi}`;
     if (!m.has(key)) m.set(key, {product:r.product, semi:r.semi, scrapAmt:0, overuseAmt:0});
@@ -1230,12 +1252,15 @@ function aggregateTop(details, metric, classFilter="all"){
   return Array.from(m.values()).sort((a,b)=>(b[metric]||0)-(a[metric]||0)).slice(0,10);
 }
 function renderTopTables(data){
+  const commonSet = makeCommonProductSet(data.jinxin.detailRows, data.daxi.detailRows);
+
   for (const key of ["jinxin","daxi"]){
     const metric = $(`${key}TopType`).value;
     const classFilter = $(`${key}TopClass`) ? $(`${key}TopClass`).value : "all";
-    const rows = aggregateTop(data[key].detailRows, metric, classFilter);
+    const rows = aggregateTop(data[key].detailRows, metric, classFilter, commonSet);
     const emptyText = classFilter === "shared" ? "目前範圍無共用類明細資料" :
                       classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
+                      classFilter === "common" ? "目前範圍無兩廠共同商品明細資料" :
                       "目前範圍無明細資料";
     $(`${key}TopTbody`).innerHTML = rows.map((r,i)=>`
       <tr>
