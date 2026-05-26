@@ -208,10 +208,17 @@
             <div class="text-sm font-bold">晉欣｜報廢 / 超用 Top 10</div>
             <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
           </div>
-          <select id="jinxinTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
-            <option value="scrapAmt">報廢金額</option>
-            <option value="overuseAmt">超用金額</option>
-          </select>
+          <div class="flex flex-wrap gap-2">
+            <select id="jinxinTopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+              <option value="all">全部</option>
+              <option value="shared">共用類</option>
+              <option value="nonShared">非共用類</option>
+            </select>
+            <select id="jinxinTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+              <option value="scrapAmt">報廢金額</option>
+              <option value="overuseAmt">超用金額</option>
+            </select>
+          </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
           <table>
@@ -227,10 +234,17 @@
             <div class="text-sm font-bold">屏榮大溪｜報廢 / 超用 Top 10</div>
             <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
           </div>
-          <select id="daxiTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
-            <option value="scrapAmt">報廢金額</option>
-            <option value="overuseAmt">超用金額</option>
-          </select>
+          <div class="flex flex-wrap gap-2">
+            <select id="daxiTopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+              <option value="all">全部</option>
+              <option value="shared">共用類</option>
+              <option value="nonShared">非共用類</option>
+            </select>
+            <select id="daxiTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+              <option value="scrapAmt">報廢金額</option>
+              <option value="overuseAmt">超用金額</option>
+            </select>
+          </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
           <table>
@@ -423,6 +437,13 @@ function sheetNameToISO(sheetName, yearHint){
   const n = safeStr(sheetName).replace(/\s+/g,"");
   let m = n.match(/^(\d{2})[\/-]?(\d{2})(?:合計)?$/);
   if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+
+  // month total sheet, e.g. 0501-31合計 / 0501~0531合計 / 05-01~05-31合計
+  m = n.match(/^(\d{2})[\/-]?(\d{2})\D+(\d{1,2})(?:合計)?$/);
+  if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+  m = n.match(/^(\d{2})[\/-]?(\d{2})\D+(\d{2})[\/-]?(\d{2})(?:合計)?$/);
+  if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+
   m = n.match(/^合計(\d{2})[\/-]?(\d{2})$/);
   if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
   m = n.match(/^合計(\d{4})$/);
@@ -1187,9 +1208,19 @@ function renderCharts(data){
     }
   });
 }
-function aggregateTop(details, metric){
+function isSharedRow(r){
+  const p = safeStr(r.product).replace(/\s+/g,"");
+  const s = safeStr(r.semi).replace(/\s+/g,"");
+  return p === "共用類" || s.includes("共用類");
+}
+
+function aggregateTop(details, metric, classFilter="all"){
   const m = new Map();
   for (const r of details){
+    const shared = isSharedRow(r);
+    if (classFilter === "shared" && !shared) continue;
+    if (classFilter === "nonShared" && shared) continue;
+
     const key = `${r.product}||${r.semi}`;
     if (!m.has(key)) m.set(key, {product:r.product, semi:r.semi, scrapAmt:0, overuseAmt:0});
     const o = m.get(key);
@@ -1201,7 +1232,11 @@ function aggregateTop(details, metric){
 function renderTopTables(data){
   for (const key of ["jinxin","daxi"]){
     const metric = $(`${key}TopType`).value;
-    const rows = aggregateTop(data[key].detailRows, metric);
+    const classFilter = $(`${key}TopClass`) ? $(`${key}TopClass`).value : "all";
+    const rows = aggregateTop(data[key].detailRows, metric, classFilter);
+    const emptyText = classFilter === "shared" ? "目前範圍無共用類明細資料" :
+                      classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
+                      "目前範圍無明細資料";
     $(`${key}TopTbody`).innerHTML = rows.map((r,i)=>`
       <tr>
         <td class="mono">${i+1}</td>
@@ -1209,7 +1244,7 @@ function renderTopTables(data){
         <td class="muted">${r.semi || "—"}</td>
         <td class="text-right mono">${fmtMoney(r[metric])}</td>
       </tr>
-    `).join("") || `<tr><td colspan="4" class="muted">目前範圍無明細資料</td></tr>`;
+    `).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
   }
 }
 
@@ -1227,7 +1262,7 @@ function wireUI(){
   });
   $("yearSel").addEventListener("change", ()=>{ renderMonthOptions(); renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
-  ["weekSel","rangeStart","rangeEnd","metricSel","jinxinTopType","daxiTopType"].forEach(id => $(id).addEventListener("change", renderAll));
+  ["weekSel","rangeStart","rangeEnd","metricSel","jinxinTopType","daxiTopType","jinxinTopClass","daxiTopClass"].forEach(id => $(id).addEventListener("change", renderAll));
   $("reloadBtn").addEventListener("click", loadAll);
 }
 
