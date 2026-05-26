@@ -769,7 +769,7 @@ function getNeededMonthKeys(){
   return [];
 }
 
-async async function loadFactoryFiles(key, files){
+async function loadFactoryFiles(key, files){
   const factory = FACTORIES[key];
   const target = state.factories[key];
   const todo = (files || []).filter(p => !target.loadedFiles.has(p) && !target.loadingFiles.has(p));
