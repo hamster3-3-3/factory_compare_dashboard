@@ -99,8 +99,8 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
             <div class="text-sm font-bold mr-1">選擇時間範圍</div>
-            <button class="seg-btn active" data-mode="year">年別</button>
-            <button class="seg-btn" data-mode="month">月別</button>
+            <button class="seg-btn" data-mode="year">年別</button>
+            <button class="seg-btn active" data-mode="month">月別</button>
             <button class="seg-btn" data-mode="week">週別</button>
             <button class="seg-btn" data-mode="range">指定範圍</button>
           </div>
@@ -112,7 +112,7 @@
             <label class="text-xs muted">年別</label>
             <select id="yearSel" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white"></select>
           </div>
-          <div class="md:col-span-3 hidden" id="monthWrap">
+          <div class="md:col-span-3" id="monthWrap">
             <label class="text-xs muted">月別</label>
             <select id="monthSel" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white"></select>
           </div>
@@ -267,10 +267,10 @@ const FACTORIES = {
 };
 
 const state = {
-  mode: "year",
+  mode: "month",
   factories: {
-    jinxin: { summary: [], details: [], files: [], errors: [] },
-    daxi: { summary: [], details: [], files: [], errors: [] }
+    jinxin: { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set() },
+    daxi: { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set() }
   },
   dateMin: null,
   dateMax: null,
@@ -354,6 +354,11 @@ function fmtMoney(n){
   if (!Number.isFinite(v)) return "—";
   return "NT$ " + Math.round(v).toLocaleString("zh-TW");
 }
+function fmtSalesWan(n){
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return Math.round(v / 10000).toLocaleString("zh-TW") + "萬";
+}
 function fmtInt(n){
   const v = Number(n);
   return Number.isFinite(v) ? Math.round(v).toLocaleString("zh-TW") : "—";
@@ -363,6 +368,7 @@ function fmtPct(n){
   return Number.isFinite(v) ? (v*100).toFixed(2)+"%" : "—";
 }
 function fmtMetric(k, v){
+  if (k === "sales") return fmtSalesWan(v);
   if (["scrapRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
   return fmtMoney(v);
 }
@@ -680,89 +686,266 @@ function parseDetailsFromWB(wb, fileName){
   return dedup;
 }
 
-async function loadFactory(key){
-  const f = FACTORIES[key];
-  const result = {summary:[], details:[], files:[], errors:[]};
-  const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => f.wastePattern.test(baseName(p)));
-  result.files = files;
-  for (const p of files){
+
+function monthKeyFromFilePath(p){
+  const s = safeStr(p);
+  let m = s.match(/^(20\d{2})\/(0[1-9]|1[0-2])\//);
+  if (m) return `${m[1]}-${m[2]}`;
+  m = s.match(/(20\d{2})-(\d{2})(\d{2})-(\d{2})(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}`;
+  m = s.match(/(?:^|[^\d])(1\d{2})\.(\d{2})\.(\d{2})/);
+  if (m) return `${1911 + Number(m[1])}-${m[2]}`;
+  m = s.match(/(20\d{2})(\d{2})(\d{2})[-_~～]/);
+  if (m) return `${m[1]}-${m[2]}`;
+  return null;
+}
+
+function monthKeysBetween(startISO, endISO){
+  const s = parseISO(startISO);
+  const e = parseISO(endISO);
+  if (!s || !e) return [];
+  const out = [];
+  const cur = new Date(s.getFullYear(), s.getMonth(), 1);
+  const end = new Date(e.getFullYear(), e.getMonth(), 1);
+  while (cur <= end){
+    out.push(`${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,"0")}`);
+    cur.setMonth(cur.getMonth()+1);
+  }
+  return out;
+}
+
+function recentMonthKeysFromManifest(files, count=3){
+  const keys = Array.from(new Set((files||[]).map(monthKeyFromFilePath).filter(Boolean))).sort();
+  return keys.slice(Math.max(0, keys.length - count));
+}
+
+function filesForMonthKeys(files, monthKeys){
+  const set = new Set(monthKeys || []);
+  return (files || []).filter(p => set.has(monthKeyFromFilePath(p)));
+}
+
+function getNeededMonthKeys(){
+  const mode = state.mode;
+  if (mode === "year"){
+    const y = $("yearSel").value;
+    return Array.from({length:12}, (_,i)=>`${y}-${String(i+1).padStart(2,"0")}`);
+  }
+  if (mode === "month"){
+    const y = $("yearSel").value, m = $("monthSel").value;
+    return y && m ? [`${y}-${m}`] : [];
+  }
+  if (mode === "week"){
+    const w = state.weeksAll.find(x => x.start === $("weekSel").value);
+    return w ? monthKeysBetween(w.start, w.end) : [];
+  }
+  if (mode === "range"){
+    const s = $("rangeStart").value || state.dateMin;
+    const e = $("rangeEnd").value || state.dateMax;
+    return s && e ? monthKeysBetween(s, e) : [];
+  }
+  return [];
+}
+
+async function loadFactoryFiles(key, files){
+  const factory = FACTORIES[key];
+  const target = state.factories[key];
+  const todo = (files || []).filter(p => !target.loadedFiles.has(p) && !target.loadingFiles.has(p));
+  if (!todo.length) return;
+
+  for (const p of todo) target.loadingFiles.add(p);
+
+  for (const p of todo){
     try{
-      const wb = await fetchWorkbook(f.baseUrl + "data/" + encodePath(p));
-      result.summary.push(...parseSummaryFromWB(wb, p));
-      result.details.push(...parseDetailsFromWB(wb, p));
+      const wb = await fetchWorkbook(factory.baseUrl + "data/" + encodePath(p));
+      target.summary.push(...parseSummaryFromWB(wb, p));
+      target.details.push(...parseDetailsFromWB(wb, p));
+      target.loadedFiles.add(p);
     }catch(e){
       console.warn(key, p, e);
-      result.errors.push(p);
+      target.errors.push(p);
+    }finally{
+      target.loadingFiles.delete(p);
     }
   }
+
   const sm = new Map();
-  for (const r of result.summary) sm.set(r.date, r);
-  result.summary = Array.from(sm.values()).sort((a,b)=>a.date.localeCompare(b.date));
-  result.details.sort((a,b)=>a.date.localeCompare(b.date));
-  return result;
+  for (const r of target.summary) sm.set(r.date, r);
+  target.summary = Array.from(sm.values()).sort((a,b)=>a.date.localeCompare(b.date));
+  target.details.sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+async function ensureDataForCurrentRange(){
+  const monthKeys = getNeededMonthKeys();
+  if (!monthKeys.length) return;
+  const currentText = $("dataStatus").textContent;
+  $("dataStatus").innerHTML = `<span class="loader"></span> 載入 ${monthKeys.join(", ")} 資料中...`;
+  await Promise.all(["jinxin","daxi"].map(key => {
+    const files = filesForMonthKeys(state.factories[key].files, monthKeys);
+    return loadFactoryFiles(key, files);
+  }));
+  $("dataStatus").textContent = `已載入：晉欣 ${state.factories.jinxin.loadedFiles.size}/${state.factories.jinxin.files.length} 份；大溪 ${state.factories.daxi.loadedFiles.size}/${state.factories.daxi.files.length} 份`;
+}
+
+async function loadFactory(key){
+  const f = FACTORIES[key];
+  const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
+  const files = (manifest.files || []).filter(p => f.wastePattern.test(baseName(p)));
+  return {
+    summary: [],
+    details: [],
+    files,
+    errors: [],
+    loadedFiles: new Set(),
+    loadingFiles: new Set()
+  };
 }
 
 async function loadAll(){
-  $("dataStatus").innerHTML = `<span class="loader"></span> 讀取兩廠資料中...`;
+  $("dataStatus").innerHTML = `<span class="loader"></span> 讀取資料索引中...`;
   await ensureLibs();
+
   const [jinxin, daxi] = await Promise.allSettled([loadFactory("jinxin"), loadFactory("daxi")]);
   if (jinxin.status === "fulfilled") state.factories.jinxin = jinxin.value;
-  else { console.error(jinxin.reason); toast("晉欣資料讀取失敗，請確認網址與 manifest。"); }
+  else { console.error(jinxin.reason); toast("晉欣資料索引讀取失敗，請確認網址與 manifest。"); }
   if (daxi.status === "fulfilled") state.factories.daxi = daxi.value;
-  else { console.error(daxi.reason); toast("大溪資料讀取失敗，請確認網址與 manifest。"); }
+  else { console.error(daxi.reason); toast("大溪資料索引讀取失敗，請確認網址與 manifest。"); }
 
-  buildGlobalDates();
+  buildGlobalDatesFromManifest();
   buildSelectors();
-  $("dataStatus").textContent = `已讀取：晉欣 ${state.factories.jinxin.files.length - state.factories.jinxin.errors.length}/${state.factories.jinxin.files.length} 份；大溪 ${state.factories.daxi.files.length - state.factories.daxi.errors.length}/${state.factories.daxi.files.length} 份`;
-  renderAll();
+
+  state.mode = "month";
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === "month"));
+  $("monthWrap").classList.remove("hidden");
+  $("weekWrap").classList.add("hidden");
+  $("rangeWrap").classList.add("hidden");
+
+  const recentKeys = Array.from(new Set([
+    ...recentMonthKeysFromManifest(state.factories.jinxin.files, 3),
+    ...recentMonthKeysFromManifest(state.factories.daxi.files, 3)
+  ])).sort();
+
+  $("dataStatus").innerHTML = `<span class="loader"></span> 優先載入近三個月資料...`;
+  await Promise.all(["jinxin","daxi"].map(key => {
+    const files = filesForMonthKeys(state.factories[key].files, recentKeys);
+    return loadFactoryFiles(key, files);
+  }));
+
+  buildGlobalDatesFromLoadedOrManifest();
+  buildSelectors();
+
+  const latestLoaded = getLatestLoadedMonthKey();
+  if (latestLoaded) {
+    $("yearSel").value = latestLoaded.slice(0,4);
+    renderMonthOptions();
+    $("monthSel").value = latestLoaded.slice(5,7);
+    renderWeekOptions();
+  }
+
+  $("dataStatus").textContent = `已載入近三個月資料：晉欣 ${state.factories.jinxin.loadedFiles.size}/${state.factories.jinxin.files.length} 份；大溪 ${state.factories.daxi.loadedFiles.size}/${state.factories.daxi.files.length} 份`;
+  await renderAll();
 }
 
-function buildGlobalDates(){
+function buildGlobalDatesFromManifest(){
+  const monthKeys = [];
+  for (const k of ["jinxin","daxi"]){
+    monthKeys.push(...(state.factories[k].files || []).map(monthKeyFromFilePath).filter(Boolean));
+  }
+  const uniq = Array.from(new Set(monthKeys)).sort();
+  if (uniq.length){
+    state.dateMin = `${uniq[0]}-01`;
+    const last = uniq[uniq.length - 1];
+    const [y,m] = last.split("-").map(Number);
+    state.dateMax = toISO(new Date(y, m, 0));
+  } else {
+    const today = toISO(new Date());
+    state.dateMin = today;
+    state.dateMax = today;
+  }
+}
+
+function buildGlobalDatesFromLoadedOrManifest(){
+  const dates = [];
+  for (const k of ["jinxin","daxi"]){
+    dates.push(...state.factories[k].summary.map(r=>r.date));
+    dates.push(...state.factories[k].details.map(r=>r.date));
+  }
+  if (dates.length){
+    dates.sort();
+    state.dateMin = dates[0];
+    state.dateMax = dates[dates.length-1];
+  } else {
+    buildGlobalDatesFromManifest();
+  }
+}
+
+function getLatestLoadedMonthKey(){
   const dates = [];
   for (const k of ["jinxin","daxi"]){
     dates.push(...state.factories[k].summary.map(r=>r.date));
     dates.push(...state.factories[k].details.map(r=>r.date));
   }
   dates.sort();
-  state.dateMin = dates[0] || toISO(new Date());
-  state.dateMax = dates[dates.length-1] || toISO(new Date());
+  return dates.length ? dates[dates.length-1].slice(0,7) : null;
+}
+
+function buildGlobalDates(){
+  buildGlobalDatesFromLoadedOrManifest();
 }
 
 function buildSelectors(){
   const years = new Set();
   const monthsByYear = {};
   const weeks = new Map();
-  for (const k of ["jinxin","daxi"]){
-    for (const r of [...state.factories[k].summary, ...state.factories[k].details]){
-      if (!r.date) continue;
-      const y = r.date.slice(0,4), mm = r.date.slice(5,7);
-      years.add(y);
-      monthsByYear[y] = monthsByYear[y] || new Set();
-      monthsByYear[y].add(mm);
-      const d = parseISO(r.date);
-      const ws = weekStartTue(d);
+
+  const addMonthKey = (mk) => {
+    if (!mk) return;
+    const y = mk.slice(0,4), mm = mk.slice(5,7);
+    years.add(y);
+    monthsByYear[y] = monthsByYear[y] || new Set();
+    monthsByYear[y].add(mm);
+
+    const ms = new Date(Number(y), Number(mm)-1, 1);
+    const me = new Date(Number(y), Number(mm), 0);
+    let ws = weekStartTue(ms);
+    while (ws <= me){
       const we = addDays(ws, 6);
       weeks.set(toISO(ws), {start:toISO(ws), end:toISO(we)});
+      ws = addDays(ws, 7);
+    }
+  };
+
+  for (const k of ["jinxin","daxi"]){
+    for (const p of state.factories[k].files || []) addMonthKey(monthKeyFromFilePath(p));
+    for (const r of [...state.factories[k].summary, ...state.factories[k].details]) {
+      if (r.date) addMonthKey(r.date.slice(0,7));
     }
   }
+
   state.years = Array.from(years).sort();
   state.monthsByYear = {};
   for (const [y,set] of Object.entries(monthsByYear)) state.monthsByYear[y] = Array.from(set).sort();
   state.weeksAll = Array.from(weeks.values()).sort((a,b)=>a.start.localeCompare(b.start));
 
+  const prevYear = $("yearSel").value;
   $("yearSel").innerHTML = state.years.map(y=>`<option value="${y}">${y}</option>`).join("");
   const latestYear = state.dateMax.slice(0,4);
-  $("yearSel").value = latestYear;
+  $("yearSel").value = state.years.includes(prevYear) ? prevYear : latestYear;
 
   renderMonthOptions();
-  $("monthSel").value = state.dateMax.slice(5,7);
+
+  const prevMonth = $("monthSel").value;
+  const months = state.monthsByYear[$("yearSel").value] || [];
+  const latestMonth = state.dateMax.slice(5,7);
+  $("monthSel").value = months.includes(prevMonth) ? prevMonth : (months.includes(latestMonth) ? latestMonth : (months.at(-1) || ""));
+
   renderWeekOptions();
   const latestWeek = state.weeksAll.filter(w => w.start <= state.dateMax && w.end >= state.dateMax).pop() || state.weeksAll.at(-1);
-  if (latestWeek) $("weekSel").value = latestWeek.start;
-  $("rangeStart").value = state.dateMin;
-  $("rangeEnd").value = state.dateMax;
+  if (latestWeek && !$("weekSel").value) $("weekSel").value = latestWeek.start;
+
+  $("rangeStart").value = $("rangeStart").value || state.dateMin;
+  $("rangeEnd").value = $("rangeEnd").value || state.dateMax;
 }
+
 function renderMonthOptions(){
   const y = $("yearSel").value;
   const months = state.monthsByYear[y] || [];
@@ -857,7 +1040,8 @@ function aggregateSeries(rows, metric, gran){
   return {keys, labels, values};
 }
 
-function renderAll(){
+async function renderAll(){
+  await ensureDataForCurrentRange();
   const data = currentData();
   renderCards(data);
   renderTable(data);
@@ -923,8 +1107,9 @@ function renderCharts(data){
   const mapJ = new Map(sj.keys.map((k,i)=>[k,sj.values[i]]));
   const mapD = new Map(sd.keys.map((k,i)=>[k,sd.values[i]]));
   const isRate = metric.includes("Rate") || metric.includes("Share");
-  const tick = v => isRate ? (Number(v)*100).toFixed(1)+"%" : Math.round(Number(v)).toLocaleString("zh-TW");
-  const tip = v => isRate ? fmtPct(v) : fmtMoney(v);
+  const isSales = metric === "sales";
+  const tick = v => isRate ? (Number(v)*100).toFixed(1)+"%" : (isSales ? Math.round(Number(v)/10000).toLocaleString("zh-TW")+"萬" : Math.round(Number(v)).toLocaleString("zh-TW"));
+  const tip = v => isRate ? fmtPct(v) : (isSales ? fmtSalesWan(v) : fmtMoney(v));
 
   destroyChart("trend");
   state.charts.trend = new Chart($("trendChart").getContext("2d"), {
@@ -935,22 +1120,71 @@ function renderCharts(data){
     ]},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false},
       plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabel(metric)}：${tip(c.parsed.y)}`}}},
-      scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":"NT$"}}}
+      scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}
     }
   });
 
-  const barMetrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
+  // 區間 KPI 差異比較：拿掉營業額；金額使用左側 Y 軸，百分比使用右側 Y 軸
+  const barLabels = ["報廢額", "超用額", "報廢率", "超用率"];
+  const barMetricByIndex = ["scrapAmt", "overuseAmt", "scrapRate", "overuseRate"];
   destroyChart("bar");
   state.charts.bar = new Chart($("barChart").getContext("2d"), {
     type:"bar",
-    data:{labels:barMetrics.map(metricLabel), datasets:[
-      {label:"晉欣", data:barMetrics.map(k=>data.jinxin.agg[k]), backgroundColor:FACTORIES.jinxin.color},
-      {label:"屏榮大溪", data:barMetrics.map(k=>data.daxi.agg[k]), backgroundColor:FACTORIES.daxi.color}
-    ]},
-    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>{
-      const k = barMetrics[c.dataIndex];
-      return ` ${c.dataset.label}：${fmtMetric(k, c.parsed.y)}`;
-    }}}}, scales:{y:{ticks:{callback:v=>Number(v).toLocaleString("zh-TW")}}}}
+    data:{
+      labels:barLabels,
+      datasets:[
+        {
+          label:"晉欣｜金額",
+          data:[data.jinxin.agg.scrapAmt, data.jinxin.agg.overuseAmt, null, null],
+          backgroundColor:FACTORIES.jinxin.color,
+          yAxisID:"y"
+        },
+        {
+          label:"屏榮大溪｜金額",
+          data:[data.daxi.agg.scrapAmt, data.daxi.agg.overuseAmt, null, null],
+          backgroundColor:FACTORIES.daxi.color,
+          yAxisID:"y"
+        },
+        {
+          label:"晉欣｜比率",
+          data:[null, null, data.jinxin.agg.scrapRate, data.jinxin.agg.overuseRate],
+          backgroundColor:"rgba(31,78,121,0.35)",
+          borderColor:FACTORIES.jinxin.color,
+          yAxisID:"y1"
+        },
+        {
+          label:"屏榮大溪｜比率",
+          data:[null, null, data.daxi.agg.scrapRate, data.daxi.agg.overuseRate],
+          backgroundColor:"rgba(107,142,35,0.35)",
+          borderColor:FACTORIES.daxi.color,
+          yAxisID:"y1"
+        }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{display:true},
+        tooltip:{callbacks:{label:c=>{
+          const metric = barMetricByIndex[c.dataIndex];
+          return ` ${c.dataset.label}：${fmtMetric(metric, c.parsed.y)}`;
+        }}}
+      },
+      scales:{
+        y:{
+          position:"left",
+          title:{display:true,text:"NT$"},
+          ticks:{callback:v=>Number(v).toLocaleString("zh-TW")}
+        },
+        y1:{
+          position:"right",
+          title:{display:true,text:"%"},
+          grid:{drawOnChartArea:false},
+          ticks:{callback:v=>(Number(v)*100).toFixed(1)+"%"}
+        }
+      }
+    }
   });
 }
 function aggregateTop(details, metric){
@@ -988,11 +1222,11 @@ function wireUI(){
       $("weekWrap").classList.toggle("hidden", state.mode !== "week");
       $("rangeWrap").classList.toggle("hidden", state.mode !== "range");
       if (state.mode === "week") renderWeekOptions();
-      renderAll();
+      renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
     });
   });
-  $("yearSel").addEventListener("change", ()=>{ renderMonthOptions(); renderWeekOptions(); renderAll(); });
-  $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll(); });
+  $("yearSel").addEventListener("change", ()=>{ renderMonthOptions(); renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
+  $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   ["weekSel","rangeStart","rangeEnd","metricSel","jinxinTopType","daxiTopType"].forEach(id => $(id).addEventListener("change", renderAll));
   $("reloadBtn").addEventListener("click", loadAll);
 }
