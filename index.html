@@ -213,12 +213,12 @@
               <option value="all">全部</option>
               <option value="shared">共用類</option>
               <option value="nonShared">非共用類</option>
-              <option value="common">兩廠共同</option>
             </select>
             <select id="jinxinTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
               <option value="overuseAmt">超用金額</option>
             </select>
+            <button id="commonTopBtnJinxin" type="button" class="seg-btn" title="顯示兩廠皆有且金額較高的共同商品">兩廠共同</button>
           </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
@@ -240,12 +240,12 @@
               <option value="all">全部</option>
               <option value="shared">共用類</option>
               <option value="nonShared">非共用類</option>
-              <option value="common">兩廠共同</option>
             </select>
             <select id="daxiTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
               <option value="overuseAmt">超用金額</option>
             </select>
+            <button id="commonTopBtnDaxi" type="button" class="seg-btn" title="顯示兩廠皆有且金額較高的共同商品">兩廠共同</button>
           </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
@@ -293,7 +293,8 @@ const state = {
   years: [],
   monthsByYear: {},
   weeksAll: [],
-  charts: { trend: null, bar: null }
+  charts: { trend: null, bar: null },
+  commonTopMode: false
 };
 
 const $ = id => document.getElementById(id);
@@ -1219,19 +1220,16 @@ function isSharedRow(r){
 function normalizeCommonProductName(name){
   return safeStr(name)
     .replace(/\u3000/g, " ")
-    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")
+    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")   // 例：健身G肉餐盒(113年) → 健身G肉餐盒
     .replace(/[（(]\s*20\d{2}\s*[）)]/g, "")
     .replace(/\s+/g, "")
     .trim();
 }
 
-function aggregateTopByProduct(details, metric, classFilter="all"){
+function aggregateTopByProduct(details, metric){
+  // 共同模式：用「商品名」彙總，避免同一商品多個半成品造成兩廠排序不一致。
   const m = new Map();
   for (const r of details || []){
-    const shared = isSharedRow(r);
-    if (classFilter === "shared" && !shared) continue;
-    if (classFilter === "nonShared" && shared) continue;
-
     const normProduct = normalizeCommonProductName(r.product);
     if (!normProduct) continue;
 
@@ -1263,6 +1261,7 @@ function aggregateTopByProduct(details, metric, classFilter="all"){
 }
 
 function aggregateTopByProductSemi(details, metric, classFilter="all"){
+  // 一般模式：維持「商品名＋半成品名」彙總，並可篩共用類 / 非共用類。
   const m = new Map();
   for (const r of details || []){
     const shared = isSharedRow(r);
@@ -1279,8 +1278,8 @@ function aggregateTopByProductSemi(details, metric, classFilter="all"){
 }
 
 function makeCommonProductOrder(jinxinRows, daxiRows, metric){
-  const jMap = new Map(aggregateTopByProduct(jinxinRows, metric, "all").map(r => [r.normProduct, r]));
-  const dMap = new Map(aggregateTopByProduct(daxiRows, metric, "all").map(r => [r.normProduct, r]));
+  const jMap = new Map(aggregateTopByProduct(jinxinRows, metric).map(r => [r.normProduct, r]));
+  const dMap = new Map(aggregateTopByProduct(daxiRows, metric).map(r => [r.normProduct, r]));
   const common = [];
   for (const [normProduct, jr] of jMap.entries()){
     if (!dMap.has(normProduct)) continue;
@@ -1291,6 +1290,9 @@ function makeCommonProductOrder(jinxinRows, daxiRows, metric){
       totalValue: (Number(jr[metric]) || 0) + (Number(dr[metric]) || 0)
     });
   }
+
+  // 共同模式排序邏輯：
+  // 同一商品兩廠都有 → 用兩廠之中「較高金額」排序；若相同，再用兩廠合計排序。
   common.sort((a,b) => {
     const maxDiff = (b.rankValue || 0) - (a.rankValue || 0);
     if (maxDiff) return maxDiff;
@@ -1300,7 +1302,7 @@ function makeCommonProductOrder(jinxinRows, daxiRows, metric){
 }
 
 function renderRowsByCommonOrder(details, metric, order){
-  const rowsByProduct = new Map(aggregateTopByProduct(details, metric, "all").map(r => [r.normProduct, r]));
+  const rowsByProduct = new Map(aggregateTopByProduct(details, metric).map(r => [r.normProduct, r]));
   const rows = [];
   for (const normProduct of order){
     const r = rowsByProduct.get(normProduct);
@@ -1309,27 +1311,40 @@ function renderRowsByCommonOrder(details, metric, order){
   return rows;
 }
 
+function syncCommonTopButtons(){
+  for (const id of ["commonTopBtnJinxin", "commonTopBtnDaxi"]){
+    const btn = $(id);
+    if (!btn) continue;
+    btn.classList.toggle("active", !!state.commonTopMode);
+  }
+}
+
 function renderTopTables(data){
-  const jMetric = $("jinxinTopType").value;
-  const dMetric = $("daxiTopType").value;
-  const commonMetric = jMetric || dMetric || "scrapAmt";
-  const commonOrder = makeCommonProductOrder(data.jinxin.detailRows, data.daxi.detailRows, commonMetric);
+  syncCommonTopButtons();
+
+  // 共同模式下兩邊顯示同一批商品，且排序一致。
+  // 若兩邊報廢/超用下拉不同，排序以左側晉欣目前選定指標為基準。
+  const commonMetric = $("jinxinTopType").value || $("daxiTopType").value || "scrapAmt";
+  const commonOrder = state.commonTopMode
+    ? makeCommonProductOrder(data.jinxin.detailRows, data.daxi.detailRows, commonMetric)
+    : [];
 
   for (const key of ["jinxin","daxi"]){
     const metric = $(`${key}TopType`).value;
     const classFilter = $(`${key}TopClass`) ? $(`${key}TopClass`).value : "all";
 
     let rows;
-    if (classFilter === "common") {
+    if (state.commonTopMode) {
       rows = renderRowsByCommonOrder(data[key].detailRows, metric, commonOrder);
     } else {
       rows = aggregateTopByProductSemi(data[key].detailRows, metric, classFilter);
     }
 
-    const emptyText = classFilter === "shared" ? "目前範圍無共用類明細資料" :
+    const emptyText = state.commonTopMode ? "目前範圍無兩廠共同商品明細資料" :
+                      classFilter === "shared" ? "目前範圍無共用類明細資料" :
                       classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
-                      classFilter === "common" ? "目前範圍無兩廠共同商品明細資料" :
                       "目前範圍無明細資料";
+
     $(`${key}TopTbody`).innerHTML = rows.map((r,i)=>`
       <tr>
         <td class="mono">${i+1}</td>
@@ -1357,6 +1372,16 @@ function wireUI(){
   $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   ["weekSel","rangeStart","rangeEnd","metricSel","jinxinTopType","daxiTopType","jinxinTopClass","daxiTopClass"].forEach(id => $(id).addEventListener("change", renderAll));
   $("reloadBtn").addEventListener("click", loadAll);
+  for (const id of ["commonTopBtnJinxin", "commonTopBtnDaxi"]){
+    const btn = $(id);
+    if (btn) {
+      btn.addEventListener("click", () => {
+        state.commonTopMode = !state.commonTopMode;
+        renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
+      });
+    }
+  }
+
 }
 
 wireUI();
