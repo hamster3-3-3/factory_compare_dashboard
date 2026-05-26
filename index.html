@@ -1219,29 +1219,55 @@ function isSharedRow(r){
 function normalizeCommonProductName(name){
   return safeStr(name)
     .replace(/\u3000/g, " ")
-    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")   // 例：健身G肉餐盒(113年) → 健身G肉餐盒
+    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")
     .replace(/[（(]\s*20\d{2}\s*[）)]/g, "")
     .replace(/\s+/g, "")
     .trim();
 }
 
-function makeCommonProductSet(jinxinRows, daxiRows){
-  const j = new Set((jinxinRows || []).map(r => normalizeCommonProductName(r.product)).filter(Boolean));
-  const d = new Set((daxiRows || []).map(r => normalizeCommonProductName(r.product)).filter(Boolean));
-  const out = new Set();
-  for (const k of j) if (d.has(k)) out.add(k);
-  return out;
-}
-
-function aggregateTop(details, metric, classFilter="all", commonSet=null){
+function aggregateTopByProduct(details, metric, classFilter="all"){
   const m = new Map();
-  for (const r of details){
+  for (const r of details || []){
     const shared = isSharedRow(r);
-    const commonKey = normalizeCommonProductName(r.product);
-
     if (classFilter === "shared" && !shared) continue;
     if (classFilter === "nonShared" && shared) continue;
-    if (classFilter === "common" && (!commonKey || !commonSet || !commonSet.has(commonKey))) continue;
+
+    const normProduct = normalizeCommonProductName(r.product);
+    if (!normProduct) continue;
+
+    if (!m.has(normProduct)) {
+      m.set(normProduct, {
+        normProduct,
+        product: r.product,
+        semiSet: new Set(),
+        scrapAmt: 0,
+        overuseAmt: 0
+      });
+    }
+    const o = m.get(normProduct);
+    o.scrapAmt += +r.scrapAmt || 0;
+    o.overuseAmt += +r.overuseAmt || 0;
+    if (r.semi) o.semiSet.add(r.semi);
+  }
+
+  return Array.from(m.values()).map(o => {
+    const semis = Array.from(o.semiSet);
+    return {
+      normProduct: o.normProduct,
+      product: o.product,
+      semi: semis.slice(0, 3).join("、") + (semis.length > 3 ? ` 等${semis.length}項` : ""),
+      scrapAmt: o.scrapAmt,
+      overuseAmt: o.overuseAmt
+    };
+  });
+}
+
+function aggregateTopByProductSemi(details, metric, classFilter="all"){
+  const m = new Map();
+  for (const r of details || []){
+    const shared = isSharedRow(r);
+    if (classFilter === "shared" && !shared) continue;
+    if (classFilter === "nonShared" && shared) continue;
 
     const key = `${r.product}||${r.semi}`;
     if (!m.has(key)) m.set(key, {product:r.product, semi:r.semi, scrapAmt:0, overuseAmt:0});
@@ -1251,13 +1277,55 @@ function aggregateTop(details, metric, classFilter="all", commonSet=null){
   }
   return Array.from(m.values()).sort((a,b)=>(b[metric]||0)-(a[metric]||0)).slice(0,10);
 }
+
+function makeCommonProductOrder(jinxinRows, daxiRows, metric){
+  const jMap = new Map(aggregateTopByProduct(jinxinRows, metric, "all").map(r => [r.normProduct, r]));
+  const dMap = new Map(aggregateTopByProduct(daxiRows, metric, "all").map(r => [r.normProduct, r]));
+  const common = [];
+  for (const [normProduct, jr] of jMap.entries()){
+    if (!dMap.has(normProduct)) continue;
+    const dr = dMap.get(normProduct);
+    common.push({
+      normProduct,
+      rankValue: Math.max(Number(jr[metric]) || 0, Number(dr[metric]) || 0),
+      totalValue: (Number(jr[metric]) || 0) + (Number(dr[metric]) || 0)
+    });
+  }
+  common.sort((a,b) => {
+    const maxDiff = (b.rankValue || 0) - (a.rankValue || 0);
+    if (maxDiff) return maxDiff;
+    return (b.totalValue || 0) - (a.totalValue || 0);
+  });
+  return common.slice(0,10).map(x => x.normProduct);
+}
+
+function renderRowsByCommonOrder(details, metric, order){
+  const rowsByProduct = new Map(aggregateTopByProduct(details, metric, "all").map(r => [r.normProduct, r]));
+  const rows = [];
+  for (const normProduct of order){
+    const r = rowsByProduct.get(normProduct);
+    if (r) rows.push(r);
+  }
+  return rows;
+}
+
 function renderTopTables(data){
-  const commonSet = makeCommonProductSet(data.jinxin.detailRows, data.daxi.detailRows);
+  const jMetric = $("jinxinTopType").value;
+  const dMetric = $("daxiTopType").value;
+  const commonMetric = jMetric || dMetric || "scrapAmt";
+  const commonOrder = makeCommonProductOrder(data.jinxin.detailRows, data.daxi.detailRows, commonMetric);
 
   for (const key of ["jinxin","daxi"]){
     const metric = $(`${key}TopType`).value;
     const classFilter = $(`${key}TopClass`) ? $(`${key}TopClass`).value : "all";
-    const rows = aggregateTop(data[key].detailRows, metric, classFilter, commonSet);
+
+    let rows;
+    if (classFilter === "common") {
+      rows = renderRowsByCommonOrder(data[key].detailRows, metric, commonOrder);
+    } else {
+      rows = aggregateTopByProductSemi(data[key].detailRows, metric, classFilter);
+    }
+
     const emptyText = classFilter === "shared" ? "目前範圍無共用類明細資料" :
                       classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
                       classFilter === "common" ? "目前範圍無兩廠共同商品明細資料" :
