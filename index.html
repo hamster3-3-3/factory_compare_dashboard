@@ -1217,43 +1217,44 @@ function isSharedRow(r){
   return p === "共用類" || s.includes("共用類");
 }
 
-function normalizeCommonProductName(name){
+function normalizeCommonSemiName(name){
   return safeStr(name)
     .replace(/\u3000/g, " ")
-    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")   // 例：健身G肉餐盒(113年) → 健身G肉餐盒
+    .replace(/[（(]\s*\d{2,4}\s*年\s*[）)]/g, "")
     .replace(/[（(]\s*20\d{2}\s*[）)]/g, "")
     .replace(/\s+/g, "")
     .trim();
 }
 
-function aggregateTopByProduct(details, metric){
-  // 共同模式：用「商品名」彙總，避免同一商品多個半成品造成兩廠排序不一致。
+function aggregateTopBySemi(details, metric){
   const m = new Map();
-  for (const r of details || []){
-    const normProduct = normalizeCommonProductName(r.product);
-    if (!normProduct) continue;
 
-    if (!m.has(normProduct)) {
-      m.set(normProduct, {
-        normProduct,
-        product: r.product,
-        semiSet: new Set(),
+  for (const r of details || []){
+    const normSemi = normalizeCommonSemiName(r.semi);
+    if (!normSemi) continue;
+
+    if (!m.has(normSemi)) {
+      m.set(normSemi, {
+        normSemi,
+        productSet: new Set(),
+        semi: r.semi,
         scrapAmt: 0,
         overuseAmt: 0
       });
     }
-    const o = m.get(normProduct);
+
+    const o = m.get(normSemi);
     o.scrapAmt += +r.scrapAmt || 0;
     o.overuseAmt += +r.overuseAmt || 0;
-    if (r.semi) o.semiSet.add(r.semi);
+    if (r.product) o.productSet.add(r.product);
   }
 
   return Array.from(m.values()).map(o => {
-    const semis = Array.from(o.semiSet);
+    const products = Array.from(o.productSet);
     return {
-      normProduct: o.normProduct,
-      product: o.product,
-      semi: semis.slice(0, 3).join("、") + (semis.length > 3 ? ` 等${semis.length}項` : ""),
+      normSemi: o.normSemi,
+      product: products.slice(0, 2).join("、") + (products.length > 2 ? ` 等${products.length}項` : ""),
+      semi: o.semi,
       scrapAmt: o.scrapAmt,
       overuseAmt: o.overuseAmt
     };
@@ -1261,8 +1262,8 @@ function aggregateTopByProduct(details, metric){
 }
 
 function aggregateTopByProductSemi(details, metric, classFilter="all"){
-  // 一般模式：維持「商品名＋半成品名」彙總，並可篩共用類 / 非共用類。
   const m = new Map();
+
   for (const r of details || []){
     const shared = isSharedRow(r);
     if (classFilter === "shared" && !shared) continue;
@@ -1270,44 +1271,49 @@ function aggregateTopByProductSemi(details, metric, classFilter="all"){
 
     const key = `${r.product}||${r.semi}`;
     if (!m.has(key)) m.set(key, {product:r.product, semi:r.semi, scrapAmt:0, overuseAmt:0});
+
     const o = m.get(key);
     o.scrapAmt += +r.scrapAmt || 0;
     o.overuseAmt += +r.overuseAmt || 0;
   }
+
   return Array.from(m.values()).sort((a,b)=>(b[metric]||0)-(a[metric]||0)).slice(0,10);
 }
 
-function makeCommonProductOrder(jinxinRows, daxiRows, metric){
-  const jMap = new Map(aggregateTopByProduct(jinxinRows, metric).map(r => [r.normProduct, r]));
-  const dMap = new Map(aggregateTopByProduct(daxiRows, metric).map(r => [r.normProduct, r]));
+function makeCommonSemiOrder(jinxinRows, daxiRows, metric){
+  const jMap = new Map(aggregateTopBySemi(jinxinRows, metric).map(r => [r.normSemi, r]));
+  const dMap = new Map(aggregateTopBySemi(daxiRows, metric).map(r => [r.normSemi, r]));
+
   const common = [];
-  for (const [normProduct, jr] of jMap.entries()){
-    if (!dMap.has(normProduct)) continue;
-    const dr = dMap.get(normProduct);
+  for (const [normSemi, jr] of jMap.entries()){
+    if (!dMap.has(normSemi)) continue;
+
+    const dr = dMap.get(normSemi);
     common.push({
-      normProduct,
+      normSemi,
       rankValue: Math.max(Number(jr[metric]) || 0, Number(dr[metric]) || 0),
       totalValue: (Number(jr[metric]) || 0) + (Number(dr[metric]) || 0)
     });
   }
 
-  // 共同模式排序邏輯：
-  // 同一商品兩廠都有 → 用兩廠之中「較高金額」排序；若相同，再用兩廠合計排序。
   common.sort((a,b) => {
     const maxDiff = (b.rankValue || 0) - (a.rankValue || 0);
     if (maxDiff) return maxDiff;
     return (b.totalValue || 0) - (a.totalValue || 0);
   });
-  return common.slice(0,10).map(x => x.normProduct);
+
+  return common.slice(0,10).map(x => x.normSemi);
 }
 
-function renderRowsByCommonOrder(details, metric, order){
-  const rowsByProduct = new Map(aggregateTopByProduct(details, metric).map(r => [r.normProduct, r]));
+function renderRowsByCommonSemiOrder(details, metric, order){
+  const rowsBySemi = new Map(aggregateTopBySemi(details, metric).map(r => [r.normSemi, r]));
   const rows = [];
-  for (const normProduct of order){
-    const r = rowsByProduct.get(normProduct);
+
+  for (const normSemi of order){
+    const r = rowsBySemi.get(normSemi);
     if (r) rows.push(r);
   }
+
   return rows;
 }
 
@@ -1322,11 +1328,9 @@ function syncCommonTopButtons(){
 function renderTopTables(data){
   syncCommonTopButtons();
 
-  // 共同模式下兩邊顯示同一批商品，且排序一致。
-  // 若兩邊報廢/超用下拉不同，排序以左側晉欣目前選定指標為基準。
   const commonMetric = $("jinxinTopType").value || $("daxiTopType").value || "scrapAmt";
   const commonOrder = state.commonTopMode
-    ? makeCommonProductOrder(data.jinxin.detailRows, data.daxi.detailRows, commonMetric)
+    ? makeCommonSemiOrder(data.jinxin.detailRows, data.daxi.detailRows, commonMetric)
     : [];
 
   for (const key of ["jinxin","daxi"]){
@@ -1335,12 +1339,12 @@ function renderTopTables(data){
 
     let rows;
     if (state.commonTopMode) {
-      rows = renderRowsByCommonOrder(data[key].detailRows, metric, commonOrder);
+      rows = renderRowsByCommonSemiOrder(data[key].detailRows, metric, commonOrder);
     } else {
       rows = aggregateTopByProductSemi(data[key].detailRows, metric, classFilter);
     }
 
-    const emptyText = state.commonTopMode ? "目前範圍無兩廠共同商品明細資料" :
+    const emptyText = state.commonTopMode ? "目前範圍無兩廠共同半成品明細資料" :
                       classFilter === "shared" ? "目前範圍無共用類明細資料" :
                       classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
                       "目前範圍無明細資料";
