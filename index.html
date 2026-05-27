@@ -218,7 +218,7 @@
               <option value="scrapAmt">報廢金額</option>
               <option value="overuseAmt">超用金額</option>
             </select>
-            <button id="commonTopBtnJinxin" type="button" class="seg-btn" title="顯示兩廠皆有且金額較高的共同商品">兩廠共同</button>
+            <button id="commonTopBtnJinxin" type="button" class="seg-btn" title="讓大溪表格依照晉欣目前半成品排序顯示">大溪廠共有</button>
           </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
@@ -245,7 +245,7 @@
               <option value="scrapAmt">報廢金額</option>
               <option value="overuseAmt">超用金額</option>
             </select>
-            <button id="commonTopBtnDaxi" type="button" class="seg-btn" title="顯示兩廠皆有且金額較高的共同商品">兩廠共同</button>
+            <button id="commonTopBtnDaxi" type="button" class="seg-btn" title="讓晉欣表格依照大溪目前半成品排序顯示">晉欣共有</button>
           </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
@@ -294,7 +294,7 @@ const state = {
   monthsByYear: {},
   weeksAll: [],
   charts: { trend: null, bar: null },
-  commonTopMode: false
+  mirrorTopSource: null
 };
 
 const $ = id => document.getElementById(id);
@@ -1226,10 +1226,14 @@ function normalizeCommonSemiName(name){
     .trim();
 }
 
-function aggregateTopBySemi(details, metric){
+function aggregateTopBySemi(details, metric, classFilter="all"){
   const m = new Map();
 
   for (const r of details || []){
+    const shared = isSharedRow(r);
+    if (classFilter === "shared" && !shared) continue;
+    if (classFilter === "nonShared" && shared) continue;
+
     const normSemi = normalizeCommonSemiName(r.semi);
     if (!normSemi) continue;
 
@@ -1256,7 +1260,8 @@ function aggregateTopBySemi(details, metric){
       product: products.slice(0, 2).join("、") + (products.length > 2 ? ` 等${products.length}項` : ""),
       semi: o.semi,
       scrapAmt: o.scrapAmt,
-      overuseAmt: o.overuseAmt
+      overuseAmt: o.overuseAmt,
+      exists: true
     };
   });
 }
@@ -1280,71 +1285,96 @@ function aggregateTopByProductSemi(details, metric, classFilter="all"){
   return Array.from(m.values()).sort((a,b)=>(b[metric]||0)-(a[metric]||0)).slice(0,10);
 }
 
-function makeCommonSemiOrder(jinxinRows, daxiRows, metric){
-  const jMap = new Map(aggregateTopBySemi(jinxinRows, metric).map(r => [r.normSemi, r]));
-  const dMap = new Map(aggregateTopBySemi(daxiRows, metric).map(r => [r.normSemi, r]));
-
-  const common = [];
-  for (const [normSemi, jr] of jMap.entries()){
-    if (!dMap.has(normSemi)) continue;
-
-    const dr = dMap.get(normSemi);
-    common.push({
-      normSemi,
-      rankValue: Math.max(Number(jr[metric]) || 0, Number(dr[metric]) || 0),
-      totalValue: (Number(jr[metric]) || 0) + (Number(dr[metric]) || 0)
-    });
+function getSemiOrderFromRows(rows){
+  const seen = new Set();
+  const order = [];
+  for (const r of rows || []){
+    const normSemi = normalizeCommonSemiName(r.semi);
+    if (!normSemi || seen.has(normSemi)) continue;
+    seen.add(normSemi);
+    order.push({ normSemi, semiLabel: r.semi || normSemi });
   }
-
-  common.sort((a,b) => {
-    const maxDiff = (b.rankValue || 0) - (a.rankValue || 0);
-    if (maxDiff) return maxDiff;
-    return (b.totalValue || 0) - (a.totalValue || 0);
-  });
-
-  return common.slice(0,10).map(x => x.normSemi);
+  return order;
 }
 
-function renderRowsByCommonSemiOrder(details, metric, order){
-  const rowsBySemi = new Map(aggregateTopBySemi(details, metric).map(r => [r.normSemi, r]));
+function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
+  const rowsBySemi = new Map(aggregateTopBySemi(details, metric, classFilter).map(r => [r.normSemi, r]));
   const rows = [];
 
-  for (const normSemi of order){
-    const r = rowsBySemi.get(normSemi);
-    if (r) rows.push(r);
+  for (const item of order){
+    const r = rowsBySemi.get(item.normSemi);
+    if (r) {
+      rows.push(r);
+    } else {
+      rows.push({
+        product: "無該半成品",
+        semi: item.semiLabel,
+        scrapAmt: null,
+        overuseAmt: null,
+        exists: false
+      });
+    }
   }
 
   return rows;
 }
 
 function syncCommonTopButtons(){
-  for (const id of ["commonTopBtnJinxin", "commonTopBtnDaxi"]){
-    const btn = $(id);
-    if (!btn) continue;
-    btn.classList.toggle("active", !!state.commonTopMode);
-  }
+  const jBtn = $("commonTopBtnJinxin");
+  const dBtn = $("commonTopBtnDaxi");
+  if (jBtn) jBtn.classList.toggle("active", state.mirrorTopSource === "jinxin");
+  if (dBtn) dBtn.classList.toggle("active", state.mirrorTopSource === "daxi");
+}
+
+function formatTopMoney(v){
+  return Number.isFinite(Number(v)) ? fmtMoney(v) : "—";
 }
 
 function renderTopTables(data){
   syncCommonTopButtons();
 
-  const commonMetric = $("jinxinTopType").value || $("daxiTopType").value || "scrapAmt";
-  const commonOrder = state.commonTopMode
-    ? makeCommonSemiOrder(data.jinxin.detailRows, data.daxi.detailRows, commonMetric)
-    : [];
+  const config = {
+    jinxin: {
+      metric: $("jinxinTopType").value,
+      classFilter: $("jinxinTopClass") ? $("jinxinTopClass").value : "all",
+      details: data.jinxin.detailRows
+    },
+    daxi: {
+      metric: $("daxiTopType").value,
+      classFilter: $("daxiTopClass") ? $("daxiTopClass").value : "all",
+      details: data.daxi.detailRows
+    }
+  };
+
+  let sourceRows = null;
+  let sourceOrder = null;
+
+  if (state.mirrorTopSource === "jinxin") {
+    sourceRows = aggregateTopByProductSemi(config.jinxin.details, config.jinxin.metric, config.jinxin.classFilter);
+    sourceOrder = getSemiOrderFromRows(sourceRows);
+  } else if (state.mirrorTopSource === "daxi") {
+    sourceRows = aggregateTopByProductSemi(config.daxi.details, config.daxi.metric, config.daxi.classFilter);
+    sourceOrder = getSemiOrderFromRows(sourceRows);
+  }
 
   for (const key of ["jinxin","daxi"]){
-    const metric = $(`${key}TopType`).value;
-    const classFilter = $(`${key}TopClass`) ? $(`${key}TopClass`).value : "all";
+    const metric = config[key].metric;
+    const classFilter = config[key].classFilter;
 
     let rows;
-    if (state.commonTopMode) {
-      rows = renderRowsByCommonSemiOrder(data[key].detailRows, metric, commonOrder);
+    if (state.mirrorTopSource === "jinxin") {
+      rows = key === "jinxin"
+        ? sourceRows
+        : renderRowsBySemiOrder(config.daxi.details, metric, sourceOrder, classFilter);
+    } else if (state.mirrorTopSource === "daxi") {
+      rows = key === "daxi"
+        ? sourceRows
+        : renderRowsBySemiOrder(config.jinxin.details, metric, sourceOrder, classFilter);
     } else {
-      rows = aggregateTopByProductSemi(data[key].detailRows, metric, classFilter);
+      rows = aggregateTopByProductSemi(config[key].details, metric, classFilter);
     }
 
-    const emptyText = state.commonTopMode ? "目前範圍無兩廠共同半成品明細資料" :
+    const emptyText = state.mirrorTopSource ? "目前範圍無可對照半成品明細資料" :
                       classFilter === "shared" ? "目前範圍無共用類明細資料" :
                       classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
                       "目前範圍無明細資料";
@@ -1354,7 +1384,7 @@ function renderTopTables(data){
         <td class="mono">${i+1}</td>
         <td>${r.product || "—"}</td>
         <td class="muted">${r.semi || "—"}</td>
-        <td class="text-right mono">${fmtMoney(r[metric])}</td>
+        <td class="text-right mono">${r.exists === false ? "—" : formatTopMoney(r[metric])}</td>
       </tr>
     `).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
   }
@@ -1376,14 +1406,21 @@ function wireUI(){
   $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   ["weekSel","rangeStart","rangeEnd","metricSel","jinxinTopType","daxiTopType","jinxinTopClass","daxiTopClass"].forEach(id => $(id).addEventListener("change", renderAll));
   $("reloadBtn").addEventListener("click", loadAll);
-  for (const id of ["commonTopBtnJinxin", "commonTopBtnDaxi"]){
-    const btn = $(id);
-    if (btn) {
-      btn.addEventListener("click", () => {
-        state.commonTopMode = !state.commonTopMode;
-        renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
-      });
-    }
+  
+  const jCommonBtn = $("commonTopBtnJinxin");
+  if (jCommonBtn) {
+    jCommonBtn.addEventListener("click", () => {
+      state.mirrorTopSource = state.mirrorTopSource === "jinxin" ? null : "jinxin";
+      renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
+    });
+  }
+
+  const dCommonBtn = $("commonTopBtnDaxi");
+  if (dCommonBtn) {
+    dCommonBtn.addEventListener("click", () => {
+      state.mirrorTopSource = state.mirrorTopSource === "daxi" ? null : "daxi";
+      renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
+    });
   }
 
 }
