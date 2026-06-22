@@ -782,6 +782,28 @@ function filesForMonthKeys(files, monthKeys){
   return (files || []).filter(p => set.has(monthKeyFromFilePath(p)));
 }
 
+function getWholeWeekRangeForMonth(year, month){
+  const y = Number(year), m = Number(month);
+  if (!y || !m) return null;
+  const monthStart = new Date(y, m - 1, 1);
+  const monthEnd = new Date(y, m, 0);
+  const weekStart = weekStartTue(monthStart);
+  const lastWeekStart = weekStartTue(monthEnd);
+  const weekEnd = addDays(lastWeekStart, 6);
+  return { start: toISO(weekStart), end: toISO(weekEnd) };
+}
+
+function getChartDateRange(){
+  const base = getDateRange();
+  // 月別的趨勢圖是「週二～週一」週別比較，跨月週必須用完整週資料，
+  // 例如 04/28～05/04 不能只取 04/28～04/30。
+  if (state.mode === "month"){
+    const wk = getWholeWeekRangeForMonth($("yearSel").value, $("monthSel").value);
+    if (wk) return wk;
+  }
+  return base;
+}
+
 function getNeededMonthKeys(){
   const mode = state.mode;
   if (mode === "year"){
@@ -790,7 +812,9 @@ function getNeededMonthKeys(){
   }
   if (mode === "month"){
     const y = $("yearSel").value, m = $("monthSel").value;
-    return y && m ? [`${y}-${m}`] : [];
+    const wk = getWholeWeekRangeForMonth(y, m);
+    // 月別圖表使用完整週，因此預先把前後跨週涉及的月份也載入。
+    return wk ? monthKeysBetween(wk.start, wk.end) : (y && m ? [`${y}-${m}`] : []);
   }
   if (mode === "week"){
     const w = state.weeksAll.find(x => x.start === $("weekSel").value);
@@ -1717,13 +1741,15 @@ async function ensureDataForCurrentRange(){
 
 function currentData(){
   const {start,end} = getDateRange();
+  const chartRange = getChartDateRange();
   const slots = selectedFactoryKeys().map(key => {
     const fstate = state.factories[key] || emptyFactoryState();
     const summaryRows = filterByRange(fstate.summary || [], start, end);
+    const chartSummaryRows = filterByRange(fstate.summary || [], chartRange.start, chartRange.end);
     const detailRows = filterByRange(fstate.details || [], start, end);
-    return { key, summaryRows, detailRows, agg: summaryAgg(summaryRows) };
+    return { key, summaryRows, chartSummaryRows, detailRows, agg: summaryAgg(summaryRows) };
   });
-  return {start, end, slots};
+  return {start, end, chartStart: chartRange.start, chartEnd: chartRange.end, slots};
 }
 
 function renderCards(data){
@@ -1775,7 +1801,7 @@ function renderCharts(data){
   const tick = v => isRate ? (Number(v)*100).toFixed(1)+"%" : (isSales ? Math.round(Number(v)/10000).toLocaleString("zh-TW")+"萬" : Math.round(Number(v)).toLocaleString("zh-TW"));
   const tip = v => isRate ? fmtPct(v) : (isSales ? fmtSalesWan(v) : fmtMoney(v));
 
-  const series = data.slots.map(s => ({slot:s, series:aggregateSeries(s.summaryRows, metric, gran)}));
+  const series = data.slots.map(s => ({slot:s, series:aggregateSeries(s.chartSummaryRows || s.summaryRows, metric, gran)}));
   const allKeys = Array.from(new Set(series.flatMap(x => x.series.keys))).sort();
   const labelMap = new Map(series.flatMap(x => x.series.keys.map((k,i)=>[k,x.series.labels[i]])));
   const labels = allKeys.map(k => labelMap.get(k) || k);
