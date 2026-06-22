@@ -19,6 +19,8 @@
       --muted:#64748b;
       --jinxin:#1f4e79;
       --daxi:#6b8e23;
+      --xinfeng:#2563eb;
+      --changjia:#a16207;
       --danger:#dc2626;
       --ok:#16a34a;
     }
@@ -88,8 +90,10 @@
         
       </div>
       <div class="flex flex-wrap gap-2 items-center">
+        <button class="seg-btn" onclick="goSite('xinfeng')">新豐半成品</button>
         <button class="seg-btn" onclick="goSite('jinxin')">晉欣半成品</button>
         <button class="seg-btn" onclick="goSite('daxi')">屏榮大溪半成品</button>
+        <button class="seg-btn" onclick="goSite('changjia')">長家半成品</button>
         <button id="reloadBtn" class="seg-btn active">重新讀取資料</button>
       </div>
     </header>
@@ -127,7 +131,26 @@
               <input id="rangeEnd" type="date" class="w-full rounded-xl border border-slate-200 px-3 py-2 bg-white" />
             </div>
           </div>
-          <div class="md:col-span-3">
+        </div>
+      </div>
+    </section>
+
+    <section class="mt-4 card p-4" id="factorySelectCard">
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="text-sm font-bold">選擇對比工廠及指標</div>
+            <div class="text-xs muted mt-1">最多選擇 2 個廠別進行同圖與區間比較</div>
+          </div>
+          <div id="factorySelectHint" class="chip">已選擇 0 / 2</div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
+          <div class="lg:col-span-8">
+            <label class="text-xs muted">對比工廠</label>
+            <div class="mt-1 flex flex-wrap gap-2" id="factorySelectWrap"></div>
+          </div>
+          <div class="lg:col-span-4">
             <label class="text-xs muted">對比指標</label>
             <select id="metricSel" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white">
               <option value="sales">營業額</option>
@@ -154,10 +177,7 @@
             <div class="text-sm font-bold">雙廠 KPI 趨勢圖</div>
             <div class="text-xs muted mt-1">同一指標，兩廠同圖比較</div>
           </div>
-          <div class="flex gap-3 text-xs muted">
-            <span><i class="factory-dot" style="background:var(--jinxin)"></i> 晉欣</span>
-            <span><i class="factory-dot" style="background:var(--daxi)"></i> 屏榮大溪</span>
-          </div>
+          <div class="flex gap-3 text-xs muted" id="trendLegend"></div>
         </div>
         <div class="mt-3 h-[320px]">
           <canvas id="trendChart"></canvas>
@@ -181,7 +201,7 @@
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
           <div class="text-sm font-bold">KPI 對比明細表</div>
-          <div class="text-xs muted mt-1">差異 = 屏榮大溪 - 晉欣</div>
+          <div class="text-xs muted mt-1" id="compareSub">差異 = 第二個選擇廠 - 第一個選擇廠</div>
         </div>
       </div>
       <div class="overflow-auto rounded-xl border border-slate-200 bg-white">
@@ -205,26 +225,26 @@
       <div class="card p-4">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
-            <div class="text-sm font-bold">晉欣｜報廢 / 超用 Top 10</div>
+            <div class="text-sm font-bold" id="slotATopTitle">廠別 A｜報廢 / 超用 Top 10</div>
             <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <select id="jinxinTopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+            <select id="slotATopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="all">全部</option>
               <option value="shared">共用類</option>
               <option value="nonShared">非共用類</option>
             </select>
-            <select id="jinxinTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+            <select id="slotATopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
               <option value="overuseAmt">超用金額</option>
             </select>
-            <button id="commonTopBtnJinxin" type="button" class="seg-btn" title="讓大溪表格依照晉欣目前半成品排序顯示">大溪廠共有</button>
+            <button id="commonTopBtnA" type="button" class="seg-btn" title="讓右側表格依照左側目前半成品排序顯示">對方廠共有</button>
           </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
           <table>
             <thead><tr><th>#</th><th>商品名</th><th>半成品名</th><th class="text-right">金額</th></tr></thead>
-            <tbody id="jinxinTopTbody"></tbody>
+            <tbody id="slotATopTbody"></tbody>
           </table>
         </div>
       </div>
@@ -232,26 +252,26 @@
       <div class="card p-4">
         <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div>
-            <div class="text-sm font-bold">屏榮大溪｜報廢 / 超用 Top 10</div>
+            <div class="text-sm font-bold" id="slotBTopTitle">廠別 B｜報廢 / 超用 Top 10</div>
             <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
           </div>
           <div class="flex flex-wrap gap-2">
-            <select id="daxiTopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+            <select id="slotBTopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="all">全部</option>
               <option value="shared">共用類</option>
               <option value="nonShared">非共用類</option>
             </select>
-            <select id="daxiTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
+            <select id="slotBTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
               <option value="overuseAmt">超用金額</option>
             </select>
-            <button id="commonTopBtnDaxi" type="button" class="seg-btn" title="讓晉欣表格依照大溪目前半成品排序顯示">晉欣共有</button>
+            <button id="commonTopBtnB" type="button" class="seg-btn" title="讓左側表格依照右側目前半成品排序顯示">對方廠共有</button>
           </div>
         </div>
         <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
           <table>
             <thead><tr><th>#</th><th>商品名</th><th>半成品名</th><th class="text-right">金額</th></tr></thead>
-            <tbody id="daxiTopTbody"></tbody>
+            <tbody id="slotBTopTbody"></tbody>
           </table>
         </div>
       </div>
@@ -266,19 +286,33 @@
 
 <script>
 const FACTORIES = {
-  jinxin: {
-    name: "晉欣",
-    siteUrl: "https://hamster3-3-3.github.io/jinxin-halfproduct/",
-    baseUrl: "https://hamster3-3-3.github.io/jinxin-halfproduct/",
-    color: "#1f4e79",
-    wastePattern: /(晉欣半成品報廢管理表|鮮食廠[_－-]?半成品生產管理日報).*\.xlsx$/i
+  xinfeng: {
+    name: "新豐",
+    siteUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
+    baseUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
+    color: "#2563eb",
+    wastePattern: /(半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
   },
   daxi: {
     name: "屏榮大溪",
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
-    wastePattern: /大溪半成品報廢管理表\.xlsx$/i
+    wastePattern: /(半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
+  },
+  changjia: {
+    name: "長家",
+    siteUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
+    baseUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
+    color: "#a16207",
+    wastePattern: /(半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
+  },
+  jinxin: {
+    name: "晉欣",
+    siteUrl: "https://hamster3-3-3.github.io/jinxin-halfproduct/",
+    baseUrl: "https://hamster3-3-3.github.io/jinxin-halfproduct/",
+    color: "#1f4e79",
+    wastePattern: /(晉欣半成品報廢管理表|鮮食廠[_－-]?半成品生產管理日報|半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
   }
 };
 
@@ -1065,6 +1099,10 @@ function aggregateSeries(rows, metric, gran){
 }
 
 async function renderAll(){
+  if (!selectedFactoryKeys().length) {
+    renderEmptyState("請先選擇 1～2 個工廠，系統會在選擇後才讀取該工廠資料。");
+    return;
+  }
   await ensureDataForCurrentRange();
   const data = currentData();
   renderCards(data);
@@ -1072,6 +1110,24 @@ async function renderAll(){
   renderCharts(data);
   renderTopTables(data);
 }
+function renderEmptyState(message){
+  destroyChart("trend");
+  destroyChart("bar");
+  const msg = message || "請先選擇工廠。";
+  const kpi = $("kpiCards");
+  if (kpi) kpi.innerHTML = `<div class="card p-4 sm:col-span-2 lg:col-span-5 muted">${msg}</div>`;
+  const tbody = $("compareTbody");
+  if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="muted">${msg}</td></tr>`;
+  const sub = $("compareSub");
+  if (sub) sub.textContent = "未選擇工廠時不載入資料";
+  const legend = $("trendLegend");
+  if (legend) legend.innerHTML = "";
+  ["slotATopTbody","slotBTopTbody"].forEach(id => { const el=$(id); if (el) el.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`; });
+  const tA = $("slotATopTitle"); if (tA) tA.textContent = "廠別 A｜報廢 / 超用 Top 10";
+  const tB = $("slotBTopTitle"); if (tB) tB.textContent = "廠別 B｜報廢 / 超用 Top 10";
+  $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
+}
+
 function renderCards(data){
   const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
   $("kpiCards").innerHTML = metrics.map(k => {
@@ -1423,6 +1479,374 @@ function wireUI(){
     });
   }
 
+}
+
+
+/* ===== Multi-factory extension: selectable 1-2 factories ===== */
+const FACTORY_ORDER = ["xinfeng", "daxi", "changjia", "jinxin"];
+state.selectedFactoryKeys = state.selectedFactoryKeys || [];
+state.mirrorTopSource = null;
+
+function allFactoryKeys(){ return FACTORY_ORDER.filter(k => FACTORIES[k]); }
+function selectedFactoryKeys(){
+  return (state.selectedFactoryKeys || []).filter(k => FACTORIES[k]).slice(0, 2);
+}
+function slotKey(slot){ return selectedFactoryKeys()[slot] || null; }
+function emptyFactoryState(){ return { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set() }; }
+
+function goSite(key){
+  const f = FACTORIES[key];
+  if (f && f.siteUrl) window.open(f.siteUrl, "_blank", "noopener,noreferrer");
+}
+
+function renderFactorySelector(){
+  const wrap = $("factorySelectWrap");
+  const hint = $("factorySelectHint");
+  if (!wrap) return;
+  const selected = selectedFactoryKeys();
+  wrap.innerHTML = allFactoryKeys().map(key => {
+    const f = FACTORIES[key];
+    const active = selected.includes(key);
+    return `<button type="button" class="seg-btn ${active ? "active" : ""}" data-factory-select="${key}">
+      <span class="factory-dot" style="background:${f.color};margin-right:6px"></span>${f.name}
+    </button>`;
+  }).join("");
+  wrap.querySelectorAll("[data-factory-select]").forEach(btn => {
+    btn.addEventListener("click", () => toggleFactorySelection(btn.dataset.factorySelect));
+  });
+  if (hint) hint.textContent = `已選擇 ${selected.length} / 2`;
+}
+
+async function toggleFactorySelection(key){
+  const selected = selectedFactoryKeys();
+  if (selected.includes(key)) {
+    state.selectedFactoryKeys = selected.filter(k => k !== key);
+  } else {
+    if (selected.length >= 2) { toast("最多只能選擇 2 個工廠做對比，請先取消其中一個工廠。"); return; }
+    state.selectedFactoryKeys = [...selected, key];
+    await ensureFactoryIndex(key);
+  }
+  state.mirrorTopSource = null;
+  buildGlobalDatesFromManifest();
+  buildSelectors();
+  renderFactorySelector();
+  renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
+}
+
+async function loadFactory(key){
+  const f = FACTORIES[key];
+  const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
+  const files = (manifest.files || []).filter(p => f.wastePattern.test(baseName(p)));
+  return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set() };
+}
+
+async function ensureFactoryIndex(key){
+  if (!FACTORIES[key]) return;
+  const cur = state.factories[key];
+  if (cur && Array.isArray(cur.files) && cur.files.length) return;
+  $("dataStatus").innerHTML = `<span class="loader"></span> 讀取${FACTORIES[key].name}資料索引中...`;
+  try{
+    state.factories[key] = await loadFactory(key);
+  }catch(e){
+    console.error(key, e);
+    state.factories[key] = emptyFactoryState();
+    toast(`${FACTORIES[key].name}資料索引讀取失敗，請確認網址與 manifest。`);
+  }
+}
+
+async function loadAll(){
+  $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
+  await ensureLibs();
+
+  // 重整時保留目前勾選；初次進入預設不勾選任何工廠，避免一開頁就讀取多廠 Excel。
+  const keepSelected = selectedFactoryKeys();
+  for (const key of allFactoryKeys()) state.factories[key] = emptyFactoryState();
+
+  // 只讀取已選工廠的 manifest；尚未選擇時完全不讀取工廠資料。
+  for (const key of keepSelected) await ensureFactoryIndex(key);
+
+  buildGlobalDatesFromManifest();
+  buildSelectors();
+  renderFactorySelector();
+
+  state.mode = "month";
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === "month"));
+  $("monthWrap").classList.remove("hidden");
+  $("weekWrap").classList.add("hidden");
+  $("rangeWrap").classList.add("hidden");
+
+  if (keepSelected.length) {
+    await renderAll();
+  } else {
+    renderEmptyState("請先選擇 1～2 個工廠，系統會在選擇後才讀取該工廠資料。");
+  }
+}
+
+function buildGlobalDatesFromManifest(){
+  const monthKeys = [];
+  const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
+  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).map(monthKeyFromFilePath).filter(Boolean));
+  const uniq = Array.from(new Set(monthKeys)).sort();
+  if (uniq.length){
+    state.dateMin = `${uniq[0]}-01`;
+    const last = uniq[uniq.length - 1];
+    const [y,m] = last.split("-").map(Number);
+    state.dateMax = toISO(new Date(y, m, 0));
+  } else {
+    const y = new Date().getFullYear();
+    state.dateMin = `${y}-01-01`;
+    state.dateMax = toISO(new Date());
+  }
+}
+
+function buildGlobalDatesFromLoadedOrManifest(){
+  const dates = [];
+  const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
+  for (const k of keys){
+    dates.push(...(state.factories[k]?.summary || []).map(r=>r.date));
+    dates.push(...(state.factories[k]?.details || []).map(r=>r.date));
+  }
+  if (dates.length){ dates.sort(); state.dateMin = dates[0]; state.dateMax = dates[dates.length-1]; }
+  else buildGlobalDatesFromManifest();
+}
+
+function getLatestLoadedMonthKey(){
+  const dates = [];
+  for (const k of selectedFactoryKeys()){
+    dates.push(...(state.factories[k]?.summary || []).map(r=>r.date));
+    dates.push(...(state.factories[k]?.details || []).map(r=>r.date));
+  }
+  dates.sort();
+  return dates.length ? dates[dates.length-1].slice(0,7) : null;
+}
+
+function buildSelectors(){
+  const years = new Set();
+  const monthsByYear = {};
+  const weeks = new Map();
+  const addMonthKey = (mk) => {
+    if (!mk) return;
+    const y = mk.slice(0,4), mm = mk.slice(5,7);
+    years.add(y);
+    monthsByYear[y] = monthsByYear[y] || new Set();
+    monthsByYear[y].add(mm);
+    const ms = new Date(Number(y), Number(mm)-1, 1);
+    const me = new Date(Number(y), Number(mm), 0);
+    let ws = weekStartTue(ms);
+    while (ws <= me){ const we = addDays(ws, 6); weeks.set(toISO(ws), {start:toISO(ws), end:toISO(we)}); ws = addDays(ws, 7); }
+  };
+  const selectorKeys = selectedFactoryKeys();
+  for (const k of selectorKeys){
+    for (const p of (state.factories[k]?.files || [])) addMonthKey(monthKeyFromFilePath(p));
+    for (const r of [...(state.factories[k]?.summary || []), ...(state.factories[k]?.details || [])]) if (r.date) addMonthKey(r.date.slice(0,7));
+  }
+  if (!selectorKeys.length) {
+    const y = String(new Date().getFullYear());
+    years.add(y);
+    monthsByYear[y] = new Set([String(new Date().getMonth()+1).padStart(2,"0")]);
+  }
+  state.years = Array.from(years).sort();
+  state.monthsByYear = {};
+  for (const [y,set] of Object.entries(monthsByYear)) state.monthsByYear[y] = Array.from(set).sort();
+  state.weeksAll = Array.from(weeks.values()).sort((a,b)=>a.start.localeCompare(b.start));
+
+  const prevYear = $("yearSel").value;
+  $("yearSel").innerHTML = state.years.map(y=>`<option value="${y}">${y}</option>`).join("");
+  const latestYear = (state.dateMax || toISO(new Date())).slice(0,4);
+  $("yearSel").value = state.years.includes(prevYear) ? prevYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1) || ""));
+  renderMonthOptions();
+
+  const prevMonth = $("monthSel").value;
+  const months = state.monthsByYear[$("yearSel").value] || [];
+  const latestMonth = (state.dateMax || "").slice(5,7);
+  $("monthSel").value = months.includes(prevMonth) ? prevMonth : (months.includes(latestMonth) ? latestMonth : (months.at(-1) || ""));
+  renderWeekOptions();
+  const latestWeek = state.weeksAll.filter(w => w.start <= state.dateMax && w.end >= state.dateMax).pop() || state.weeksAll.at(-1);
+  if (latestWeek && !$("weekSel").value) $("weekSel").value = latestWeek.start;
+  $("rangeStart").value = $("rangeStart").value || state.dateMin;
+  $("rangeEnd").value = $("rangeEnd").value || state.dateMax;
+}
+
+async function ensureDataForCurrentRange(){
+  const selected = selectedFactoryKeys();
+  if (!selected.length) {
+    $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
+    return;
+  }
+  for (const key of selected) await ensureFactoryIndex(key);
+  const monthKeys = getNeededMonthKeys();
+  if (!monthKeys.length) return;
+  $("dataStatus").innerHTML = `<span class="loader"></span> 載入 ${monthKeys.join(", ")} 資料中...`;
+  await Promise.all(selected.map(key => {
+    const files = filesForMonthKeys(state.factories[key].files, monthKeys);
+    return loadFactoryFiles(key, files);
+  }));
+  $("dataStatus").textContent = `已載入：` + selected.map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`).join("；");
+}
+
+function currentData(){
+  const {start,end} = getDateRange();
+  const slots = selectedFactoryKeys().map(key => {
+    const fstate = state.factories[key] || emptyFactoryState();
+    const summaryRows = filterByRange(fstate.summary || [], start, end);
+    const detailRows = filterByRange(fstate.details || [], start, end);
+    return { key, summaryRows, detailRows, agg: summaryAgg(summaryRows) };
+  });
+  return {start, end, slots};
+}
+
+function renderCards(data){
+  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
+  const slots = data.slots;
+  $("kpiCards").innerHTML = metrics.map(k => {
+    const values = slots.map(s => `<div><div class="kpi-sub">${FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono" style="color:${FACTORIES[s.key].color}">${fmtMetric(k, s.agg[k])}</div></div>`).join("");
+    let diffHtml = "";
+    if (slots.length === 2){
+      const diff = (slots[1].agg[k] ?? 0) - (slots[0].agg[k] ?? 0);
+      diffHtml = `<div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${k.includes("Rate") || k.includes("Share") ? fmtPct(diff) : fmtMoney(diff)}</span></div>`;
+    }
+    return `<div class="card p-4"><div class="kpi-title">${metricLabel(k)}</div><div class="mt-3 grid grid-cols-${Math.max(1, slots.length)} gap-3">${values}</div>${diffHtml}</div>`;
+  }).join("");
+}
+
+function renderTable(data){
+  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate","topScrapAmt","topOverAmt","sharedAmt","sharedShare"];
+  const slots = data.slots;
+  const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
+  if (header) {
+    header.innerHTML = `<th>指標</th>${slots.map(s=>`<th class="text-right">${FACTORIES[s.key].name}</th>`).join("")}${slots.length===2?`<th class="text-right">差異</th><th class="text-right">差異率</th><th>判讀</th>`:""}`;
+  }
+  const sub = $("compareSub");
+  if (sub) sub.textContent = slots.length === 2 ? `差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}` : "單廠檢視，請再選擇 1 個工廠進行差異比較";
+
+  $("compareTbody").innerHTML = metrics.map(k => {
+    const valueCells = slots.map(s => `<td class="text-right mono">${fmtMetric(k, s.agg[k])}</td>`).join("");
+    if (slots.length < 2) return `<tr><td>${metricLabel(k)}</td>${valueCells}</tr>`;
+    const a = slots[0].agg[k], b = slots[1].agg[k];
+    const diff = (b ?? 0) - (a ?? 0);
+    const diffRate = (a && Number.isFinite(a) && a !== 0) ? diff / a : null;
+    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseRate","sharedShare"].includes(k);
+    let judge = "—";
+    if (Number.isFinite(diff)){
+      if (Math.abs(diff) < 1e-9) judge = "兩廠接近";
+      else if (higherBad) judge = diff > 0 ? `${FACTORIES[slots[1].key].name}較高，需注意` : `${FACTORIES[slots[0].key].name}較高，需注意`;
+      else judge = diff > 0 ? `${FACTORIES[slots[1].key].name}較高` : `${FACTORIES[slots[0].key].name}較高`;
+    }
+    return `<tr><td>${metricLabel(k)}</td>${valueCells}<td class="text-right mono">${fmtMetric(k,diff)}</td><td class="text-right mono">${fmtPct(diffRate)}</td><td>${judge}</td></tr>`;
+  }).join("");
+}
+
+function renderCharts(data){
+  const metric = $("metricSel").value;
+  const gran = granularity(data.start,data.end);
+  const isRate = metric.includes("Rate") || metric.includes("Share");
+  const isSales = metric === "sales";
+  const tick = v => isRate ? (Number(v)*100).toFixed(1)+"%" : (isSales ? Math.round(Number(v)/10000).toLocaleString("zh-TW")+"萬" : Math.round(Number(v)).toLocaleString("zh-TW"));
+  const tip = v => isRate ? fmtPct(v) : (isSales ? fmtSalesWan(v) : fmtMoney(v));
+
+  const series = data.slots.map(s => ({slot:s, series:aggregateSeries(s.summaryRows, metric, gran)}));
+  const allKeys = Array.from(new Set(series.flatMap(x => x.series.keys))).sort();
+  const labelMap = new Map(series.flatMap(x => x.series.keys.map((k,i)=>[k,x.series.labels[i]])));
+  const labels = allKeys.map(k => labelMap.get(k) || k);
+  const datasets = series.map(x => {
+    const map = new Map(x.series.keys.map((k,i)=>[k,x.series.values[i]]));
+    return {label:FACTORIES[x.slot.key].name, data:allKeys.map(k=>map.get(k) ?? null), borderColor:FACTORIES[x.slot.key].color, backgroundColor:FACTORIES[x.slot.key].color, tension:.25, spanGaps:true};
+  });
+  const legend = $("trendLegend");
+  if (legend) legend.innerHTML = data.slots.map(s => `<span><i class="factory-dot" style="background:${FACTORIES[s.key].color}"></i> ${FACTORIES[s.key].name}</span>`).join("");
+
+  destroyChart("trend");
+  state.charts.trend = new Chart($("trendChart").getContext("2d"), {
+    type:"line", data:{labels, datasets},
+    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabel(metric)}：${tip(c.parsed.y)}`}}}, scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}}
+  });
+
+  const barLabels = ["報廢額", "超用額", "報廢率", "超用率"];
+  const barMetricByIndex = ["scrapAmt", "overuseAmt", "scrapRate", "overuseRate"];
+  const barSets = [];
+  for (const s of data.slots){
+    barSets.push({label:`${FACTORIES[s.key].name}｜金額`, data:[s.agg.scrapAmt, s.agg.overuseAmt, null, null], backgroundColor:FACTORIES[s.key].color, yAxisID:"y"});
+    barSets.push({label:`${FACTORIES[s.key].name}｜比率`, data:[null, null, s.agg.scrapRate, s.agg.overuseRate], backgroundColor:FACTORIES[s.key].color + "55", borderColor:FACTORIES[s.key].color, yAxisID:"y1"});
+  }
+  destroyChart("bar");
+  state.charts.bar = new Chart($("barChart").getContext("2d"), {
+    type:"bar", data:{labels:barLabels, datasets:barSets},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}：${fmtMetric(barMetricByIndex[c.dataIndex], c.parsed.y)}`}}}, scales:{y:{position:"left", title:{display:true,text:"NT$"}, ticks:{callback:v=>Number(v).toLocaleString("zh-TW")}}, y1:{position:"right", title:{display:true,text:"%"}, grid:{drawOnChartArea:false}, ticks:{callback:v=>(Number(v)*100).toFixed(1)+"%"}}}}
+  });
+}
+
+function syncCommonTopButtons(){
+  const aBtn = $("commonTopBtnA"), bBtn = $("commonTopBtnB");
+  if (aBtn) aBtn.classList.toggle("active", state.mirrorTopSource === "A");
+  if (bBtn) bBtn.classList.toggle("active", state.mirrorTopSource === "B");
+}
+
+function renderTopTables(data){
+  const slots = data.slots;
+  syncCommonTopButtons();
+  const slotCfg = [
+    {slot:"A", key:slots[0]?.key, tbody:"slotATopTbody", title:"slotATopTitle", metricSel:"slotATopType", classSel:"slotATopClass", commonBtn:"commonTopBtnA"},
+    {slot:"B", key:slots[1]?.key, tbody:"slotBTopTbody", title:"slotBTopTitle", metricSel:"slotBTopType", classSel:"slotBTopClass", commonBtn:"commonTopBtnB"}
+  ];
+  for (const cfg of slotCfg){
+    const wrapTitle = $(cfg.title);
+    const tbody = $(cfg.tbody);
+    const btn = $(cfg.commonBtn);
+    if (!tbody) continue;
+    if (!cfg.key){
+      if (wrapTitle) wrapTitle.textContent = "請選擇第二個廠別｜報廢 / 超用 Top 10";
+      tbody.innerHTML = `<tr><td colspan="4" class="muted">請再選擇 1 個工廠進行對比。</td></tr>`;
+      if (btn) btn.style.display = "none";
+      continue;
+    }
+    if (wrapTitle) wrapTitle.textContent = `${FACTORIES[cfg.key].name}｜報廢 / 超用 Top 10`;
+    if (btn) { btn.style.display = ""; btn.textContent = cfg.slot === "A" && slots[1] ? `${FACTORIES[slots[1].key].name}共有` : (cfg.slot === "B" && slots[0] ? `${FACTORIES[slots[0].key].name}共有` : "對方廠共有"); }
+  }
+
+  const config = slotCfg.filter(c=>c.key).map((cfg, idx) => ({
+    ...cfg,
+    metric: $(cfg.metricSel).value,
+    classFilter: $(cfg.classSel) ? $(cfg.classSel).value : "all",
+    details: slots[idx].detailRows
+  }));
+
+  let sourceRows = null, sourceOrder = null;
+  if (state.mirrorTopSource === "A" && config[0]) { sourceRows = aggregateTopByProductSemi(config[0].details, config[0].metric, config[0].classFilter); sourceOrder = getSemiOrderFromRows(sourceRows); }
+  if (state.mirrorTopSource === "B" && config[1]) { sourceRows = aggregateTopByProductSemi(config[1].details, config[1].metric, config[1].classFilter); sourceOrder = getSemiOrderFromRows(sourceRows); }
+
+  for (let i=0;i<config.length;i++){
+    const cfg = config[i];
+    let rows;
+    if (state.mirrorTopSource === "A" && config[0]) rows = i === 0 ? sourceRows : renderRowsBySemiOrder(cfg.details, cfg.metric, sourceOrder, cfg.classFilter);
+    else if (state.mirrorTopSource === "B" && config[1]) rows = i === 1 ? sourceRows : renderRowsBySemiOrder(cfg.details, cfg.metric, sourceOrder, cfg.classFilter);
+    else rows = aggregateTopByProductSemi(cfg.details, cfg.metric, cfg.classFilter);
+
+    const emptyText = state.mirrorTopSource ? "目前範圍無可對照半成品明細資料" : cfg.classFilter === "shared" ? "目前範圍無共用類明細資料" : cfg.classFilter === "nonShared" ? "目前範圍無非共用類明細資料" : "目前範圍無明細資料";
+    $(cfg.tbody).innerHTML = rows.map((r,j)=>`<tr><td class="mono">${j+1}</td><td>${r.product || "—"}</td><td class="muted">${r.semi || "—"}</td><td class="text-right mono">${r.exists === false ? "—" : formatTopMoney(r[cfg.metric])}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
+  }
+}
+
+function wireUI(){
+  renderFactorySelector();
+  document.querySelectorAll("[data-mode]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      state.mode = btn.dataset.mode;
+      document.querySelectorAll("[data-mode]").forEach(b=>b.classList.toggle("active", b === btn));
+      $("monthWrap").classList.toggle("hidden", !["month","week"].includes(state.mode));
+      $("weekWrap").classList.toggle("hidden", state.mode !== "week");
+      $("rangeWrap").classList.toggle("hidden", state.mode !== "range");
+      if (state.mode === "week") renderWeekOptions();
+      renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
+    });
+  });
+  $("yearSel").addEventListener("change", ()=>{ renderMonthOptions(); renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
+  $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
+  ["weekSel","rangeStart","rangeEnd","metricSel","slotATopType","slotBTopType","slotATopClass","slotBTopClass"].forEach(id => { const el=$(id); if (el) el.addEventListener("change", renderAll); });
+  $("reloadBtn").addEventListener("click", loadAll);
+  const aCommonBtn = $("commonTopBtnA");
+  if (aCommonBtn) aCommonBtn.addEventListener("click", () => { state.mirrorTopSource = state.mirrorTopSource === "A" ? null : "A"; renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
+  const bCommonBtn = $("commonTopBtnB");
+  if (bCommonBtn) bCommonBtn.addEventListener("click", () => { state.mirrorTopSource = state.mirrorTopSource === "B" ? null : "B"; renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
 }
 
 wireUI();
