@@ -278,7 +278,7 @@
     </section>
 
     <p class="muted text-xs mt-4 leading-relaxed">
-      資料讀取來源：晉欣與屏榮大溪原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
+      資料讀取來源：新豐、屏榮大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
   </div>
 
@@ -1555,15 +1555,25 @@ async function ensureFactoryIndex(key){
 }
 
 async function loadAll(){
-  $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
+  $("dataStatus").innerHTML = `<span class="loader"></span> 讀取四廠資料索引中...`;
   await ensureLibs();
 
-  // 重整時保留目前勾選；初次進入預設不勾選任何工廠，避免一開頁就讀取多廠 Excel。
+  // 重整時保留目前勾選；初次進入仍預設不勾選任何工廠。
+  // 但會先預載四廠近三個月資料，之後選擇工廠時可直接使用快取資料，降低等待時間。
   const keepSelected = selectedFactoryKeys();
   for (const key of allFactoryKeys()) state.factories[key] = emptyFactoryState();
 
-  // 只讀取已選工廠的 manifest；尚未選擇時完全不讀取工廠資料。
-  for (const key of keepSelected) await ensureFactoryIndex(key);
+  const results = await Promise.allSettled(allFactoryKeys().map(async key => {
+    state.factories[key] = await loadFactory(key);
+  }));
+  results.forEach((res, idx) => {
+    if (res.status === "rejected") {
+      const key = allFactoryKeys()[idx];
+      console.error(key, res.reason);
+      state.factories[key] = emptyFactoryState();
+      toast(`${FACTORIES[key].name}資料索引讀取失敗，請確認網址與 manifest。`);
+    }
+  });
 
   buildGlobalDatesFromManifest();
   buildSelectors();
@@ -1575,10 +1585,31 @@ async function loadAll(){
   $("weekWrap").classList.add("hidden");
   $("rangeWrap").classList.add("hidden");
 
+  const recentKeysByFactory = {};
+  for (const key of allFactoryKeys()) {
+    recentKeysByFactory[key] = recentMonthKeysFromManifest(state.factories[key].files || [], 3);
+  }
+  const recentLabel = Array.from(new Set(Object.values(recentKeysByFactory).flat())).sort().join("、") || "近三個月";
+  $("dataStatus").innerHTML = `<span class="loader"></span> 預先載入四廠近三個月資料中（${recentLabel}）...`;
+
+  await Promise.all(allFactoryKeys().map(key => {
+    const files = filesForMonthKeys(state.factories[key].files || [], recentKeysByFactory[key] || []);
+    return loadFactoryFiles(key, files);
+  }));
+
+  buildGlobalDatesFromLoadedOrManifest();
+  buildSelectors();
+  renderFactorySelector();
+
+  const preloadSummary = allFactoryKeys()
+    .map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`)
+    .join("；");
+  $("dataStatus").textContent = `已預載四廠近三個月資料：${preloadSummary}`;
+
   if (keepSelected.length) {
     await renderAll();
   } else {
-    renderEmptyState("請先選擇 1～2 個工廠，系統會在選擇後才讀取該工廠資料。");
+    renderEmptyState("已預載四廠近三個月資料；請選擇 1～2 個工廠進行對比。若切換到較早月份，系統會再補讀該月份資料。");
   }
 }
 
@@ -1635,7 +1666,7 @@ function buildSelectors(){
     let ws = weekStartTue(ms);
     while (ws <= me){ const we = addDays(ws, 6); weeks.set(toISO(ws), {start:toISO(ws), end:toISO(we)}); ws = addDays(ws, 7); }
   };
-  const selectorKeys = selectedFactoryKeys();
+  const selectorKeys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
   for (const k of selectorKeys){
     for (const p of (state.factories[k]?.files || [])) addMonthKey(monthKeyFromFilePath(p));
     for (const r of [...(state.factories[k]?.summary || []), ...(state.factories[k]?.details || [])]) if (r.date) addMonthKey(r.date.slice(0,7));
