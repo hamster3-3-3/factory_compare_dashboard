@@ -78,6 +78,15 @@
       padding:12px 14px;border-radius:14px;box-shadow:0 12px 28px rgba(0,0,0,.18);display:none;z-index:50;
     }
     .factory-dot{width:10px;height:10px;border-radius:999px;display:inline-block}
+
+    .daily-range-separator td{
+      background:#f8fafc;
+      color:#334155;
+      font-weight:700;
+      border-top:1px solid var(--line);
+      border-bottom:1px solid var(--line);
+      padding:9px 12px;
+    }
   </style>
 </head>
 
@@ -158,10 +167,6 @@
               <option value="scrapRate">報廢率</option>
               <option value="overuseAmt">超用額</option>
               <option value="overuseRate">超用率</option>
-              <option value="topScrapAmt">廢棄前10名金額</option>
-              <option value="topOverAmt">超用前10名金額</option>
-              <option value="sharedAmt">共用類廢棄金額</option>
-              <option value="sharedShare">共用類廢棄構成比</option>
             </select>
           </div>
         </div>
@@ -281,6 +286,50 @@
       </div>
     </section>
 
+    <section class="mt-4 card p-4" id="dailyDetailCard">
+      <div class="flex flex-col gap-4">
+        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div class="min-w-0">
+            <div class="text-sm font-bold">日別明細總覽</div>
+            <div class="text-xs muted mt-1">可依目前選擇區間檢視各廠半成品日別明細，並可展開前段期間比較</div>
+            <div class="mt-3 flex flex-wrap items-center gap-3">
+              <button id="dailyPrevBtn" type="button" class="seg-btn">前段明細展開</button>
+              <div class="text-sm"><span class="font-medium">日別明細</span><span class="muted">（依日期排序）</span></div>
+              <div class="text-xs muted" id="dailyDetailRangeLabel">—</div>
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-2 items-center">
+            <button id="dailyExpandBtn" type="button" class="seg-btn">切換為展開產出</button>
+            <button id="dailyRateBtn" type="button" class="seg-btn">切換為比率</button>
+            <button id="dailyCsvBtn" type="button" class="seg-btn">下載 CSV</button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
+          <div class="lg:col-span-3">
+            <label class="text-xs muted">廠別</label>
+            <select id="dailyDetailFactory" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm"></select>
+          </div>
+          <div class="lg:col-span-6">
+            <label class="text-xs muted">半成品名搜尋（輸入關鍵字）</label>
+            <input id="dailySemiSearch" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm" placeholder="例如：肉燥、鮭魚、海鮮湯凍" autocomplete="off" />
+            <div id="dailySemiSuggest" class="mt-2 hidden rounded-xl border border-slate-200 bg-white overflow-hidden"></div>
+          </div>
+          <div class="lg:col-span-3">
+            <div class="text-xs muted">顯示筆數</div>
+            <div id="dailyDetailCount" class="mt-1 chip inline-flex">0 筆</div>
+          </div>
+        </div>
+
+        <div class="overflow-auto max-h-[520px] rounded-xl border border-slate-200 bg-white">
+          <table>
+            <thead id="dailyDetailThead"></thead>
+            <tbody id="dailyDetailTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <p class="muted text-xs mt-4 leading-relaxed">
       資料讀取來源：新豐、屏榮大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
@@ -375,16 +424,26 @@ function parseDate(v, yearHint=null){
   if (v == null || v === "") return null;
   if (v instanceof Date && !isNaN(v)) return new Date(v.getFullYear(), v.getMonth(), v.getDate());
   if (typeof v === "number" && Number.isFinite(v)){
-    try{
-      const dc = XLSX.SSF.parse_date_code(v);
-      if (dc && dc.y && dc.m && dc.d) return new Date(dc.y, dc.m-1, dc.d);
-    }catch(_){}
-    const ms = Math.round((v - 25569) * 86400 * 1000);
-    const d = new Date(ms);
-    if (!isNaN(d)) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    // Excel serial dates normally are large numbers. 5月前舊版「半成品管理表」的日期欄
+    // 有時只放 1~31 的日數；不要把這種值誤轉成 1900 年日期。
+    if (v >= 1000){
+      try{
+        const dc = XLSX.SSF.parse_date_code(v);
+        if (dc && dc.y && dc.m && dc.d) return new Date(dc.y, dc.m-1, dc.d);
+      }catch(_){}
+      const ms = Math.round((v - 25569) * 86400 * 1000);
+      const d = new Date(ms);
+      if (!isNaN(d)) return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    }
+    return null;
   }
-  let s = safeStr(v).trim().replace(/\./g,"/").replace(/-/g,"/");
-  let m = s.match(/^(20\d{2})\/(\d{1,2})\/(\d{1,2})$/);
+  let raw = safeStr(v).trim();
+  if (!raw) return null;
+  // 支援「4月21日」、「04月21日」與「4/21」等舊表日期格式。
+  let m = raw.match(/^(?:20\d{2}年)?(\d{1,2})月(\d{1,2})日?$/);
+  if (m && yearHint) return new Date(+yearHint, +m[1]-1, +m[2]);
+  let s = raw.replace(/\./g,"/").replace(/-/g,"/").replace(/年/g,"/").replace(/月/g,"/").replace(/日/g,"");
+  m = s.match(/^(20\d{2})\/(\d{1,2})\/(\d{1,2})$/);
   if (m) return new Date(+m[1], +m[2]-1, +m[3]);
   m = s.match(/^(1\d{2})\/(\d{1,2})\/(\d{1,2})$/);
   if (m) return new Date(1911 + +m[1], +m[2]-1, +m[3]);
@@ -586,23 +645,57 @@ function parseSummaryFromWB(wb, fileName){
   const idxSharedShare = findGroupSub("共用類廢棄","構成比");
 
   const out = [];
+  const summaryFileSpan = parseFileSpanFromName(fileName);
+  const summaryYearHint = parseFileYearHint(fileName);
+  const dataStartRow = hRow + 2;
+  function dateWithinSpan(d, span){
+    if (!d || !span) return false;
+    const t = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    return t >= span.start.getTime() && t <= span.end.getTime();
+  }
+  function recoverSummaryDate(rawDate, rowOffset){
+    let d = parseDate(rawDate, summaryYearHint);
+    if (d && d.getFullYear() >= 2000 && (!summaryFileSpan || dateWithinSpan(d, summaryFileSpan))) return d;
+    if (summaryFileSpan){
+      // 舊版月檔的日期欄有時只有 1~31；用檔名區間的年月還原日期。
+      const dayOnly = asNumber(rawDate);
+      if (Number.isFinite(dayOnly) && dayOnly >= 1 && dayOnly <= 31){
+        const s = summaryFileSpan.start, e = summaryFileSpan.end;
+        const candidates = [];
+        let cur = new Date(s.getFullYear(), s.getMonth(), 1);
+        const last = new Date(e.getFullYear(), e.getMonth(), 1);
+        while (cur <= last){
+          candidates.push(new Date(cur.getFullYear(), cur.getMonth(), dayOnly));
+          cur.setMonth(cur.getMonth()+1);
+        }
+        const hit = candidates.find(x => dateWithinSpan(x, summaryFileSpan));
+        if (hit) return hit;
+      }
+      // 若日期欄完全無法解析，依資料列順序從檔名起日往後推。
+      const seq = addDays(summaryFileSpan.start, rowOffset);
+      if (dateWithinSpan(seq, summaryFileSpan)) return seq;
+    }
+    return d;
+  }
   for (let r=hRow+2;r<rows.length;r++){
     const row = rows[r]||[];
-    const d = parseDate(row[idxDate], parseFileYearHint(fileName));
-    if (!d) continue;
+    const hasAnyValue = row.some(v => v !== null && v !== undefined && v !== "");
+    if (!hasAnyValue) continue;
+    const d = recoverSummaryDate(row[idxDate], r - dataStartRow);
+    if (!d || d.getFullYear() < 2000) continue;
     out.push({
       date: toISO(d),
       sales: num(row[idxSales],0),
       scrapAmt: num(row[idxScrapAmt],0),
-      scrapRate: num(row[idxScrapRate],0),
+      scrapRate: normalizeExcelRate(row[idxScrapRate]) || 0,
       overuseAmt: num(row[idxOverAmt],0),
-      overuseRate: num(row[idxOverRate],0),
+      overuseRate: normalizeExcelRate(row[idxOverRate]) || 0,
       topScrapAmt: num(row[idxTopScrapAmt],0),
-      topScrapShare: num(row[idxTopScrapShare],0),
+      topScrapShare: normalizeExcelRate(row[idxTopScrapShare]) || 0,
       topOverAmt: num(row[idxTopOverAmt],0),
-      topOverShare: num(row[idxTopOverShare],0),
+      topOverShare: normalizeExcelRate(row[idxTopOverShare]) || 0,
       sharedAmt: num(row[idxSharedAmt],0),
-      sharedShare: num(row[idxSharedShare],0)
+      sharedShare: normalizeExcelRate(row[idxSharedShare]) || 0
     });
   }
   // 舊版「長家廠半成品管理表(0401-0430).xlsx」等月檔，有時日別報廢率總表的日期欄會殘留上月快取。
@@ -1012,8 +1105,13 @@ function dedupeFactoryData(target){
     if (!(Number(base.topScrapAmt) > 0) && d.topScrapAmt > 0) base.topScrapAmt = d.topScrapAmt;
     if (!(Number(base.topOverAmt) > 0) && d.topOverAmt > 0) base.topOverAmt = d.topOverAmt;
     if (!(Number(base.sharedAmt) > 0) && d.sharedAmt > 0) base.sharedAmt = d.sharedAmt;
-    const sales = Number(base.sales) || 0;
+    let sales = Number(base.sales) || 0;
+    const loadedScrapRate = Number(base.scrapRate) || 0;
+    const loadedOveruseRate = Number(base.overuseRate) || 0;
+    if (!(sales > 0) && (Number(base.scrapAmt) || 0) > 0 && loadedScrapRate > 0) sales = (Number(base.scrapAmt) || 0) / loadedScrapRate;
+    if (!(sales > 0) && (Number(base.overuseAmt) || 0) > 0 && loadedOveruseRate > 0) sales = (Number(base.overuseAmt) || 0) / loadedOveruseRate;
     if (sales > 0){
+      base.sales = sales;
       base.scrapRate = (Number(base.scrapAmt) || 0) / sales;
       base.overuseRate = (Number(base.overuseAmt) || 0) / sales;
     }
@@ -1308,12 +1406,28 @@ function getDateRange(){
 function filterByRange(rows,start,end){ return rows.filter(r => r.date >= start && r.date <= end); }
 
 function summaryAgg(rows){
-  const sales = rows.reduce((a,b)=>a+(+b.sales||0),0);
-  const scrapAmt = rows.reduce((a,b)=>a+(+b.scrapAmt||0),0);
-  const overuseAmt = rows.reduce((a,b)=>a+(+b.overuseAmt||0),0);
-  const topScrapAmt = rows.reduce((a,b)=>a+(+b.topScrapAmt||0),0);
-  const topOverAmt = rows.reduce((a,b)=>a+(+b.topOverAmt||0),0);
-  const sharedAmt = rows.reduce((a,b)=>a+(+b.sharedAmt||0),0);
+  let sales = 0;
+  let scrapAmt = 0;
+  let overuseAmt = 0;
+  let topScrapAmt = 0;
+  let topOverAmt = 0;
+  let sharedAmt = 0;
+  for (const b of rows || []){
+    const sa = +b.sales || 0;
+    const sc = +b.scrapAmt || 0;
+    const ov = +b.overuseAmt || 0;
+    const sr = +b.scrapRate || 0;
+    const or = +b.overuseRate || 0;
+    let inferredSales = sa;
+    if (!(inferredSales > 0) && sc > 0 && sr > 0) inferredSales = sc / sr;
+    if (!(inferredSales > 0) && ov > 0 && or > 0) inferredSales = ov / or;
+    sales += inferredSales > 0 ? inferredSales : 0;
+    scrapAmt += sc;
+    overuseAmt += ov;
+    topScrapAmt += +b.topScrapAmt || 0;
+    topOverAmt += +b.topOverAmt || 0;
+    sharedAmt += +b.sharedAmt || 0;
+  }
   return {
     sales, scrapAmt, overuseAmt, topScrapAmt, topOverAmt, sharedAmt,
     scrapRate: sales > 0 ? scrapAmt / sales : null,
@@ -1371,11 +1485,13 @@ async function renderAll(){
     return;
   }
   await ensureDataForCurrentRange();
+  await ensureDailyDetailDataForCurrentSelection();
   const data = currentData();
   renderCards(data);
   renderTable(data);
   renderCharts(data);
   renderTopTables(data);
+  renderDailyDetailCard(data);
 }
 function renderEmptyState(message){
   destroyChart("trend");
@@ -1390,6 +1506,10 @@ function renderEmptyState(message){
   const legend = $("trendLegend");
   if (legend) legend.innerHTML = "";
   ["slotATopTbody","slotBTopTbody"].forEach(id => { const el=$(id); if (el) el.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`; });
+  const dailyCols = renderDailyDetailHeader();
+  const dailyBody = $("dailyDetailTbody"); if (dailyBody) dailyBody.innerHTML = `<tr><td colspan="${(dailyCols.length || 1)}" class="muted">${msg}</td></tr>`;
+  const dailyCount = $("dailyDetailCount"); if (dailyCount) dailyCount.textContent = "0 筆";
+  const dailyRange = $("dailyDetailRangeLabel"); if (dailyRange) dailyRange.textContent = msg;
   const tA = $("slotATopTitle"); if (tA) tA.textContent = "廠別 A｜報廢 / 超用 Top 10";
   const tB = $("slotBTopTitle"); if (tB) tB.textContent = "廠別 B｜報廢 / 超用 Top 10";
   $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
@@ -1420,7 +1540,7 @@ function renderCards(data){
   }).join("");
 }
 function renderTable(data){
-  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate","topScrapAmt","topOverAmt","sharedAmt","sharedShare"];
+  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
   $("compareTbody").innerHTML = metrics.map(k => {
     const j = data.jinxin.agg[k], d = data.daxi.agg[k];
     const diff = (d ?? 0) - (j ?? 0);
@@ -1819,6 +1939,7 @@ function wireUI(){
 const FACTORY_ORDER = ["xinfeng", "daxi", "changjia", "jinxin"];
 state.selectedFactoryKeys = state.selectedFactoryKeys || [];
 state.mirrorTopSource = null;
+state.dailyDetail = state.dailyDetail || { factory: "all", query: "", prevExpanded: false, expandView: false, rateView: false };
 
 function allFactoryKeys(){ return FACTORY_ORDER.filter(k => FACTORIES[k]); }
 function selectedFactoryKeys(){
@@ -2144,7 +2265,7 @@ function renderCards(data){
 }
 
 function renderTable(data){
-  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate","topScrapAmt","topOverAmt","sharedAmt","sharedShare"];
+  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
   const slots = data.slots;
   const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
   if (header) {
@@ -2262,8 +2383,406 @@ function renderTopTables(data){
     else rows = aggregateTopByProductSemi(cfg.details, cfg.metric, cfg.classFilter);
 
     const emptyText = state.mirrorTopSource ? "目前範圍無可對照半成品明細資料" : cfg.classFilter === "shared" ? "目前範圍無共用類明細資料" : cfg.classFilter === "nonShared" ? "目前範圍無非共用類明細資料" : "目前範圍無明細資料";
-    $(cfg.tbody).innerHTML = rows.map((r,j)=>`<tr><td class="mono">${j+1}</td><td>${r.product || "—"}</td><td class="muted">${r.semi || "—"}</td><td class="text-right mono">${r.exists === false ? "—" : formatTopValue(r[cfg.metric], cfg.metric)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
+    $(cfg.tbody).innerHTML = rows.map((r,j)=>{
+      const canJump = r.exists !== false && safeStr(r.semi).trim();
+      const semiCell = canJump
+        ? `<button type="button" class="text-left hover:underline hover:text-slate-900" title="跳轉到${FACTORIES[cfg.key].name}的半成品日別明細" data-top-semi="${escapeHTML(r.semi)}" data-top-factory="${cfg.key}">${escapeHTML(r.semi)}</button>`
+        : escapeHTML(r.semi || "—");
+      return `<tr class="${canJump ? "cursor-pointer" : ""}" ${canJump ? `data-top-semi-row="${escapeHTML(r.semi)}" data-top-factory-row="${cfg.key}" title="點擊半成品可跳轉到日別明細"` : ""}>
+        <td class="mono">${j+1}</td>
+        <td>${escapeHTML(r.product || "—")}</td>
+        <td class="muted">${semiCell}</td>
+        <td class="text-right mono">${r.exists === false ? "—" : formatTopValue(r[cfg.metric], cfg.metric)}</td>
+      </tr>`;
+    }).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
   }
+}
+
+function jumpToDailyDetailFromTop(factoryKey, semi){
+  const cleanedSemi = safeStr(semi).trim();
+  if (!cleanedSemi || !FACTORIES[factoryKey]) return;
+  state.dailyDetail = state.dailyDetail || { factory: "all", query: "", prevExpanded: false, expandView: false, rateView: false };
+  state.dailyDetail.factory = factoryKey;
+  state.dailyDetail.query = cleanedSemi;
+
+  const factorySel = $("dailyDetailFactory");
+  if (factorySel) factorySel.value = factoryKey;
+  const searchInput = $("dailySemiSearch");
+  if (searchInput) searchInput.value = cleanedSemi;
+
+  renderDailyDetailCard(currentData());
+  const card = $("dailyDetailCard");
+  if (card) {
+    card.scrollIntoView({behavior:"smooth", block:"start"});
+    card.classList.add("ring-2", "ring-slate-300");
+    clearTimeout(card._jumpTimer);
+    card._jumpTimer = setTimeout(()=>card.classList.remove("ring-2", "ring-slate-300"), 1600);
+  }
+}
+
+
+function getPreviousDateRange(startISO, endISO){
+  const start = parseISO(startISO);
+  const end = parseISO(endISO);
+  if (!start || !end) return null;
+
+  if (state.mode === "week") {
+    return { start: toISO(addDays(start, -7)), end: toISO(addDays(end, -7)), label: "前一週" };
+  }
+
+  if (state.mode === "month") {
+    const y = start.getFullYear();
+    const m = start.getMonth();
+    const ps = new Date(y, m - 1, 1);
+    const pe = new Date(y, m, 0);
+    return { start: toISO(ps), end: toISO(pe), label: "前一月" };
+  }
+
+  if (state.mode === "year") {
+    const y = start.getFullYear() - 1;
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: "前一年" };
+  }
+
+  if (state.mode === "day") {
+    const d = addDays(start, -1);
+    return { start: toISO(d), end: toISO(d), label: "前一日" };
+  }
+
+  const days = Math.max(1, Math.round((end - start) / 86400000) + 1);
+  const pe = addDays(start, -1);
+  const ps = addDays(pe, -(days - 1));
+  return { start: toISO(ps), end: toISO(pe), label: "前段區間" };
+}
+
+function dailyRangeText(r){
+  if (!r || !r.start || !r.end) return "—";
+  return `${r.start} ～ ${r.end}`;
+}
+
+async function ensureDailyDetailDataForCurrentSelection(){
+  if (!state.dailyDetail || !state.dailyDetail.prevExpanded) return;
+  const selected = selectedFactoryKeys();
+  if (!selected.length) return;
+  const cur = getDateRange();
+  const prev = getPreviousDateRange(cur.start, cur.end);
+  if (!prev) return;
+  const monthKeys = monthKeysBetween(prev.start, prev.end);
+  if (!monthKeys.length) return;
+  await Promise.all(selected.map(async key => {
+    await ensureFactoryIndex(key);
+    const files = filesForMonthKeys(state.factories[key].files || [], monthKeys);
+    return loadFactoryFiles(key, files);
+  }));
+}
+
+function normalizeDailySearch(s){
+  return safeStr(s).replace(/\u3000/g, " ").replace(/\s+/g, "").toLowerCase();
+}
+function escapeHTML(s){
+  return safeStr(s).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+function numOrNull(v){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function fmtDailyQty(v){
+  const n = numOrNull(v);
+  if (n == null) return "—";
+  return n.toLocaleString("zh-TW", {maximumFractionDigits: 2});
+}
+function fmtDailyUnit(v){
+  const n = numOrNull(v);
+  if (n == null) return "—";
+  return n.toLocaleString("zh-TW", {maximumFractionDigits: 2});
+}
+function fmtDailyMoney(v){
+  const n = numOrNull(v);
+  if (n == null) return "—";
+  return fmtMoney(n);
+}
+function fmtDailyPct(v){
+  const n = numOrNull(v);
+  return n == null ? "—" : fmtPct(n);
+}
+
+function getDailyDetailState(){
+  state.dailyDetail = state.dailyDetail || {};
+  if (state.dailyDetail.factory == null) state.dailyDetail.factory = "all";
+  if (state.dailyDetail.query == null) state.dailyDetail.query = "";
+  if (state.dailyDetail.prevExpanded == null) state.dailyDetail.prevExpanded = false;
+  if (state.dailyDetail.expandView == null) state.dailyDetail.expandView = false;
+  if (state.dailyDetail.rateView == null) state.dailyDetail.rateView = false;
+  return state.dailyDetail;
+}
+
+function deriveDailyDiffSource(r){
+  const refillQty = numOrNull(r.refillQtyNew ?? r.refillQty ?? r.refill);
+  return refillQty != null && refillQty > 0 ? "補單" : "多產出";
+}
+
+function getDailyValuePack(r){
+  const order = numOrNull(r.order);
+  const expandQty = numOrNull(r.expandQty);
+  const actualQty = numOrNull(r.actualQty);
+  const refillQty = numOrNull(r.refillQtyNew ?? r.refillQty ?? r.refill);
+  const outputQty = numOrNull(r.output ?? r.outQty);
+  let expandRate = numOrNull(r.expandRate);
+  let actualRate = numOrNull(r.actualRate);
+  let refillRate = numOrNull(r.refillRateNew ?? r.refillRate);
+  let prodRate = numOrNull(r.prodRate);
+  if (expandRate == null && order != null && order > 0 && expandQty != null) expandRate = expandQty / order;
+  if (actualRate == null && order != null && order > 0 && actualQty != null) actualRate = actualQty / order;
+  if (refillRate == null && order != null && order > 0 && refillQty != null) refillRate = refillQty / order;
+  if (prodRate == null && order != null && order > 0 && outputQty != null) prodRate = outputQty / order;
+  return { order, expandQty, actualQty, refillQty, outputQty, expandRate, actualRate, refillRate, prodRate };
+}
+
+function getDailyDetailColumns(){
+  const dailyState = getDailyDetailState();
+  const expand = !!dailyState.expandView;
+  const rate = !!dailyState.rateView;
+  const base = [
+    { label: "日期", cell: r => escapeHTML(r.date || "—"), cls: "mono" },
+    { label: "商品名", cell: r => escapeHTML(r.product || "—") },
+    { label: "半成品名", cell: r => `<span class="muted">${escapeHTML(r.semi || "—")}</span>` },
+    { label: "單價", cell: r => fmtDailyUnit(r.price ?? r.unitPrice), cls: "text-right mono" },
+    { label: "訂單需求", cell: r => fmtDailyQty(r.order), cls: "text-right mono" }
+  ];
+  if (!expand && !rate){
+    return base.concat([
+      { label: "總產出(kg)", cell: r => fmtDailyQty(getDailyValuePack(r).outputQty), cls: "text-right mono" },
+      { label: "報廢數(kg)", cell: r => fmtDailyQty(r.scrapQty), cls: "text-right mono" },
+      { label: "報廢金額", cell: r => fmtDailyMoney(r.scrapAmt), cls: "text-right mono" },
+      { label: "超用數(kg)", cell: r => fmtDailyQty(r.overuseQty), cls: "text-right mono" },
+      { label: "超用金額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+      { label: "超用來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
+    ]);
+  }
+  if (expand && !rate){
+    return base.concat([
+      { label: "生管展開量(kg)", cell: r => fmtDailyQty(getDailyValuePack(r).expandQty), cls: "text-right mono" },
+      { label: "生產實際產出量(kg)", cell: r => fmtDailyQty(getDailyValuePack(r).actualQty), cls: "text-right mono" },
+      { label: "生產補單量", cell: r => fmtDailyQty(getDailyValuePack(r).refillQty), cls: "text-right mono" },
+      { label: "總產出(kg)", cell: r => fmtDailyQty(getDailyValuePack(r).outputQty), cls: "text-right mono" },
+      { label: "差異來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
+    ]);
+  }
+  if (!expand && rate){
+    return base.concat([
+      { label: "總產出率", cell: r => fmtDailyPct(getDailyValuePack(r).prodRate), cls: "text-right mono" },
+      { label: "報廢率", cell: r => fmtDailyPct(r.scrapRate), cls: "text-right mono" },
+      { label: "報廢金額", cell: r => fmtDailyMoney(r.scrapAmt), cls: "text-right mono" },
+      { label: "超用率", cell: r => fmtDailyPct(r.overuseRate), cls: "text-right mono" },
+      { label: "超用金額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+      { label: "超用來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
+    ]);
+  }
+  return base.concat([
+    { label: "生管展開率(%)", cell: r => fmtDailyPct(getDailyValuePack(r).expandRate), cls: "text-right mono" },
+    { label: "生產實際產出比(%)", cell: r => fmtDailyPct(getDailyValuePack(r).actualRate), cls: "text-right mono" },
+    { label: "生產補單率(%)", cell: r => fmtDailyPct(getDailyValuePack(r).refillRate), cls: "text-right mono" },
+    { label: "總產出率(%)", cell: r => fmtDailyPct(getDailyValuePack(r).prodRate), cls: "text-right mono" },
+    { label: "差異來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
+  ]);
+}
+
+function renderDailyDetailHeader(){
+  const thead = $("dailyDetailThead");
+  if (!thead) return [];
+  const cols = getDailyDetailColumns();
+  thead.innerHTML = `<tr>${cols.map(c => `<th${c.cls ? ` class="${c.cls}"` : ""}>${c.label}</th>`).join("")}</tr>`;
+  return cols;
+}
+
+function dailyCsvEscape(v){
+  const s = String(v ?? "");
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
+}
+
+function downloadDailyDetailCsv(data){
+  const rows = buildDailyDetailRows(data).slice(0,500);
+  const cols = getDailyDetailColumns();
+  const header = cols.map(c => dailyCsvEscape(c.label)).join(",");
+  const lines = [header];
+  let lastRangeKey = null;
+  let lastRangeMeta = null;
+  if (!rows.length){
+    lines.push(dailyCsvEscape("目前沒有可匯出的資料"));
+  } else {
+    for (const r of rows){
+      const rangeKey = `${r.rangeLabel || "目前區間"}|${r.rangeStart || ""}|${r.rangeEnd || ""}`;
+      const curMeta = {
+        label: r.rangeLabel || "目前區間",
+        span: dailyRangeText({start:r.rangeStart, end:r.rangeEnd})
+      };
+      if (getDailyDetailState().prevExpanded && lastRangeKey !== null && rangeKey !== lastRangeKey){
+        lines.push(dailyCsvEscape(`以上：${lastRangeMeta.label}｜${lastRangeMeta.span} / 以下：${curMeta.label}｜${curMeta.span}`));
+      }
+      lastRangeKey = rangeKey; lastRangeMeta = curMeta;
+      lines.push(cols.map(c => dailyCsvEscape((c.cell(r) || "").replace(/<[^>]*>/g,"").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&#39;/g,"'").replace(/&quot;/g,'"'))).join(","));
+    }
+  }
+  const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type:"text/csv;charset=utf-8;"});
+  const a = document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  const cur = dailyRangeText({start:data.start,end:data.end}).replace(/\s+/g,"");
+  a.href = url;
+  a.download = `日別明細總覽_${cur}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+}
+
+function getDailyDetailFactoryKeys(){
+  return selectedFactoryKeys();
+}
+
+function shortFactoryName(key){
+  return ({xinfeng:"新豐", daxi:"大溪", changjia:"長家", jinxin:"晉欣"}[key]) || safeStr(FACTORIES[key]?.name || key).replace(/^屏榮/, "");
+}
+
+function renderDailyFactoryOptions(){
+  const sel = $("dailyDetailFactory");
+  if (!sel) return;
+  const keys = getDailyDetailFactoryKeys();
+  const prev = state.dailyDetail?.factory || "all";
+  sel.innerHTML = `<option value="all">全部已選工廠</option>` + keys.map(k => `<option value="${k}">${shortFactoryName(k)}</option>`).join("");
+  sel.value = (prev !== "all" && keys.includes(prev)) ? prev : "all";
+  state.dailyDetail.factory = sel.value;
+}
+
+function buildDailyDetailRows(data){
+  const cur = { start: data.start, end: data.end, label: "目前區間" };
+  const ranges = [cur];
+  if (state.dailyDetail?.prevExpanded) {
+    const prev = getPreviousDateRange(data.start, data.end);
+    if (prev) ranges.unshift(prev);
+  }
+
+  const selectedFactory = state.dailyDetail?.factory || "all";
+  const q = normalizeDailySearch(state.dailyDetail?.query || "");
+  const out = [];
+
+  for (const s of data.slots || []){
+    if (selectedFactory !== "all" && s.key !== selectedFactory) continue;
+    const allDetails = state.factories[s.key]?.details || [];
+    for (const rg of ranges){
+      const rows = filterByRange(allDetails, rg.start, rg.end);
+      for (const r of rows){
+        if (q) {
+          const semiKey = normalizeDailySearch(r.semi);
+          if (!semiKey.includes(q)) continue;
+        }
+        out.push(Object.assign({}, r, { factoryKey: s.key, rangeLabel: rg.label, rangeStart: rg.start, rangeEnd: rg.end }));
+      }
+    }
+  }
+  out.sort((a,b)=> safeStr(a.date).localeCompare(safeStr(b.date)) || safeStr(FACTORIES[a.factoryKey]?.name).localeCompare(safeStr(FACTORIES[b.factoryKey]?.name)) || safeStr(a.product).localeCompare(safeStr(b.product)) || safeStr(a.semi).localeCompare(safeStr(b.semi)));
+  return out;
+}
+
+function renderDailySemiSuggestions(data){
+  const box = $("dailySemiSuggest");
+  if (!box) return;
+  const q = normalizeDailySearch(state.dailyDetail?.query || "");
+  if (!q) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+
+  const selectedFactory = state.dailyDetail?.factory || "all";
+  const m = new Map();
+  for (const s of data.slots || []){
+    if (selectedFactory !== "all" && s.key !== selectedFactory) continue;
+    for (const r of state.factories[s.key]?.details || []){
+      const semi = safeStr(r.semi).trim();
+      if (!semi || !normalizeDailySearch(semi).includes(q)) continue;
+      const key = `${s.key}||${semi}`;
+      if (!m.has(key)) m.set(key, {factoryKey:s.key, semi, products:new Set(), count:0});
+      const item = m.get(key);
+      if (r.product) item.products.add(r.product);
+      item.count += 1;
+    }
+  }
+
+  const items = Array.from(m.values()).sort((a,b)=>b.count-a.count || safeStr(a.semi).localeCompare(safeStr(b.semi))).slice(0,12);
+  if (!items.length) {
+    box.innerHTML = `<div class="px-3 py-2 text-sm muted">找不到符合「${escapeHTML(state.dailyDetail?.query || "")}」的半成品。</div>`;
+    box.classList.remove("hidden");
+    return;
+  }
+
+  box.innerHTML = items.map(item => {
+    const products = Array.from(item.products).slice(0,2).join("、") || "—";
+    return `<button type="button" class="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100" data-daily-semi="${escapeHTML(item.semi)}" data-daily-factory="${item.factoryKey}">
+      <div class="text-sm font-semibold"><span class="factory-dot" style="background:${FACTORIES[item.factoryKey].color};margin-right:6px"></span>${escapeHTML(item.semi)}</div>
+      <div class="text-xs muted mt-1">${shortFactoryName(item.factoryKey)}｜${escapeHTML(products)}｜${item.count.toLocaleString("zh-TW")} 筆</div>
+    </button>`;
+  }).join("");
+  box.classList.remove("hidden");
+}
+
+function renderDailyDetailCard(data){
+  const dailyState = getDailyDetailState();
+  renderDailyFactoryOptions();
+
+  const curText = `目前區間：${dailyRangeText({start:data.start,end:data.end})}`;
+  const prev = getPreviousDateRange(data.start, data.end);
+  const prevText = prev ? `${prev.label}：${dailyRangeText(prev)}` : "";
+  const rangeLabel = $("dailyDetailRangeLabel");
+  if (rangeLabel) rangeLabel.textContent = dailyState.prevExpanded && prevText ? `前段：${dailyRangeText(prev)}` : curText;
+
+  const prevBtn = $("dailyPrevBtn");
+  if (prevBtn) {
+    prevBtn.classList.toggle("active", !!dailyState.prevExpanded);
+    prevBtn.textContent = dailyState.prevExpanded ? "收合前段明細" : "前段明細展開";
+  }
+  const expandBtn = $("dailyExpandBtn");
+  if (expandBtn) expandBtn.classList.toggle("active", !!dailyState.expandView);
+  const rateBtn = $("dailyRateBtn");
+  if (rateBtn) rateBtn.classList.toggle("active", !!dailyState.rateView);
+
+  const search = $("dailySemiSearch");
+  if (search && search.value !== (dailyState.query || "")) search.value = dailyState.query || "";
+
+  const cols = renderDailyDetailHeader();
+  const colCount = cols.length || 1;
+  const rows = buildDailyDetailRows(data);
+  const tbody = $("dailyDetailTbody");
+  const count = $("dailyDetailCount");
+  if (count) count.textContent = `${rows.length.toLocaleString("zh-TW")} 筆${rows.length > 500 ? "（顯示前 500 筆）" : ""}`;
+
+  renderDailySemiSuggestions(data);
+
+  if (!tbody) return;
+  if (!data.slots?.length) {
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="muted">請先選擇工廠。</td></tr>`;
+    return;
+  }
+  if (!rows.length) {
+    const msg = (dailyState.query || "") ? "目前條件找不到半成品日別明細。" : "目前區間無半成品日別明細。";
+    tbody.innerHTML = `<tr><td colspan="${colCount}" class="muted">${msg}</td></tr>`;
+    return;
+  }
+
+  const visibleRows = rows.slice(0,500);
+  const pieces = [];
+  let lastRangeKey = null;
+  let lastRangeMeta = null;
+  const showSeparators = !!dailyState.prevExpanded;
+  for (const r of visibleRows){
+    const rangeKey = `${r.rangeLabel || "目前區間"}|${r.rangeStart || ""}|${r.rangeEnd || ""}`;
+    if (showSeparators) {
+      const curMeta = {
+        label: escapeHTML(r.rangeLabel || "目前區間"),
+        span: escapeHTML(dailyRangeText({start:r.rangeStart, end:r.rangeEnd}))
+      };
+      if (lastRangeKey !== null && rangeKey !== lastRangeKey) {
+        pieces.push(`<tr class="daily-range-separator"><td colspan="${colCount}">以上：${lastRangeMeta.label}｜${lastRangeMeta.span}　／　以下：${curMeta.label}｜${curMeta.span}</td></tr>`);
+      }
+      lastRangeKey = rangeKey;
+      lastRangeMeta = curMeta;
+    }
+    pieces.push(`<tr>${cols.map(c => `<td${c.cls ? ` class="${c.cls}"` : ""}>${c.cell(r)}</td>`).join("")}</tr>`);
+  }
+  tbody.innerHTML = pieces.join("");
 }
 
 function wireUI(){
@@ -2282,6 +2801,40 @@ function wireUI(){
   $("yearSel").addEventListener("change", ()=>{ renderMonthOptions(); renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   ["weekSel","rangeStart","rangeEnd","metricSel","slotATopType","slotBTopType","slotATopClass","slotBTopClass"].forEach(id => { const el=$(id); if (el) el.addEventListener("change", renderAll); });
+  const dailyFactory = $("dailyDetailFactory");
+  if (dailyFactory) dailyFactory.addEventListener("change", () => { getDailyDetailState().factory = dailyFactory.value; renderDailyDetailCard(currentData()); });
+  const dailySearch = $("dailySemiSearch");
+  if (dailySearch) dailySearch.addEventListener("input", () => { getDailyDetailState().query = dailySearch.value; renderDailyDetailCard(currentData()); });
+  const dailyPrev = $("dailyPrevBtn");
+  if (dailyPrev) dailyPrev.addEventListener("click", () => { getDailyDetailState().prevExpanded = !getDailyDetailState().prevExpanded; renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
+  const dailyExpand = $("dailyExpandBtn");
+  if (dailyExpand) dailyExpand.addEventListener("click", () => { getDailyDetailState().expandView = !getDailyDetailState().expandView; renderDailyDetailCard(currentData()); });
+  const dailyRate = $("dailyRateBtn");
+  if (dailyRate) dailyRate.addEventListener("click", () => { getDailyDetailState().rateView = !getDailyDetailState().rateView; renderDailyDetailCard(currentData()); });
+  const dailyCsv = $("dailyCsvBtn");
+  if (dailyCsv) dailyCsv.addEventListener("click", () => { downloadDailyDetailCsv(currentData()); });
+  const dailySuggest = $("dailySemiSuggest");
+  if (dailySuggest) dailySuggest.addEventListener("click", (ev) => {
+    const btn = ev.target.closest("[data-daily-semi]");
+    if (!btn) return;
+    state.dailyDetail.query = btn.dataset.dailySemi || "";
+    if (state.dailyDetail.factory !== "all") state.dailyDetail.factory = btn.dataset.dailyFactory || state.dailyDetail.factory;
+    const inp = $("dailySemiSearch"); if (inp) inp.value = state.dailyDetail.query;
+    renderDailyDetailCard(currentData());
+  });
+  ["slotATopTbody","slotBTopTbody"].forEach(id => {
+    const tbody = $(id);
+    if (!tbody) return;
+    tbody.addEventListener("click", (ev) => {
+      const direct = ev.target.closest("[data-top-semi]");
+      const row = ev.target.closest("[data-top-semi-row]");
+      const target = direct || row;
+      if (!target) return;
+      const semi = target.dataset.topSemi || target.dataset.topSemiRow || "";
+      const factory = target.dataset.topFactory || target.dataset.topFactoryRow || "";
+      jumpToDailyDetailFromTop(factory, semi);
+    });
+  });
   $("reloadBtn").addEventListener("click", loadAll);
   const aCommonBtn = $("commonTopBtnA");
   if (aCommonBtn) aCommonBtn.addEventListener("click", () => { state.mirrorTopSource = state.mirrorTopSource === "A" ? null : "A"; renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
