@@ -295,25 +295,27 @@ const FACTORIES = {
     siteUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
     color: "#2563eb",
-    // 新豐部分月份會以「新豐廠生產管理報表」「【JFM指導】...」命名；
+    // 新豐部分月份會以「新豐廠生產管理報表」命名；
     // 不能只篩「半成品報廢管理表、半成品生產管理日報」。
-    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表|JFM指導).*\.xlsx$/i
+    // 「【JFM指導】」系列檔案目前不讀取，由 isLikelyFactoryWorkbook 統一排除。
+    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
   },
   daxi: {
     name: "屏榮大溪",
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
-    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表|JFM指導).*\.xlsx$/i
+    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
   },
   changjia: {
     name: "長家",
     siteUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
     color: "#a16207",
-    // 長家的 manifest 檔名不一定只寫「半成品生產管理日報」，有些月份會用「生產管理報表 / JFM指導」命名。
+    // 長家的 manifest 檔名不一定只寫「半成品生產管理日報」，有些月份會用「生產管理報表」命名。
     // 若這裡只篩「報廢管理表、日報」，5 月相關檔案容易被排除，導致只讀到少數檔案。
-    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表|JFM指導).*\.xlsx$/i
+    // 「【JFM指導】」系列檔案目前不讀取，由 isLikelyFactoryWorkbook 統一排除。
+    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
   },
   jinxin: {
     name: "晉欣",
@@ -829,20 +831,23 @@ function isLikelyFactoryWorkbook(key, path){
   if (!/\.(xlsx|xlsm|xls)$/i.test(name)) return false;
   if (/^(~\$|\.)/.test(name)) return false;
   if (/備份|backup|old|舊檔|測試/i.test(name)) return false;
+  // 依需求：排除「【JFM指導】」系列檔案，避免被「生產管理報表」寬鬆規則納入。
+  if (/JFM\s*指導/i.test(name) || /【\s*JFM\s*指導\s*】/i.test(name)) return false;
 
   const f = FACTORIES[key];
   if (f && f.wastePattern && f.wastePattern.test(name)) return true;
 
-  // 新豐、長家部分月份的檔名會使用「廠別＋生產管理報表」「【JFM指導】...」等名稱，
+  // 新豐、長家部分月份的檔名會使用「廠別＋生產管理報表」等名稱，
   // 不會命中原本的「半成品生產管理日報」篩選，導致 manifest 中多數 5 月檔案沒有被載入。
+  // 注意：「【JFM指導】」系列已在上方先排除。
   if (key === "xinfeng") {
-    return /(新豐|屏榮新豐|XiFang|Xifang|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
+    return /(新豐|屏榮新豐|XiFang|Xifang|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
   }
   if (key === "changjia") {
-    return /(長家|ChangJia|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
+    return /(長家|ChangJia|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
   }
   if (key === "daxi") {
-    return /(大溪|Daxi|屏榮大溪|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
+    return /(大溪|Daxi|屏榮大溪|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
   }
 
   return false;
