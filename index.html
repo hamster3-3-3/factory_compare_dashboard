@@ -831,26 +831,126 @@ function isLikelyFactoryWorkbook(key, path){
   if (!/\.(xlsx|xlsm|xls)$/i.test(name)) return false;
   if (/^(~\$|\.)/.test(name)) return false;
   if (/備份|backup|old|舊檔|測試/i.test(name)) return false;
-  // 依需求：排除「【JFM指導】」系列檔案，避免被「生產管理報表」寬鬆規則納入。
+
+  // 依需求：JFM 指導系列目前不讀取。
+  // 同時避免把一般「生產管理報表」誤當成半成品日報；長家原站只把半成品報廢/日報/管理表視為 KPI 來源。
   if (/JFM\s*指導/i.test(name) || /【\s*JFM\s*指導\s*】/i.test(name)) return false;
 
-  const f = FACTORIES[key];
-  if (f && f.wastePattern && f.wastePattern.test(name)) return true;
+  // KPI / 報廢 / 超用只能讀半成品檔案。若放寬到「生產管理報表」，會把 JFM/一般生管表讀進 summary，
+  // 同日期資料可能以 0 報廢/0 超用覆蓋真正的半成品管理表，長家 5 月就會出現這種現象。
+  const halfProductPattern = /(半成品報廢管理表|半成品生產管理日報|半成品生產管理報表|半成品管理表).*\.(xlsx|xlsm|xls)$/i;
+  if (halfProductPattern.test(name)) return true;
 
-  // 新豐、長家部分月份的檔名會使用「廠別＋生產管理報表」等名稱，
-  // 不會命中原本的「半成品生產管理日報」篩選，導致 manifest 中多數 5 月檔案沒有被載入。
-  // 注意：「【JFM指導】」系列已在上方先排除。
-  if (key === "xinfeng") {
-    return /(新豐|屏榮新豐|XiFang|Xifang|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
-  }
-  if (key === "changjia") {
-    return /(長家|ChangJia|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
-  }
-  if (key === "daxi") {
-    return /(大溪|Daxi|屏榮大溪|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
-  }
+  // 保留較彈性的保護：檔名必須同時含「半成品」與廠別關鍵字，不接受單純「生產管理報表」。
+  const factoryNamePattern = {
+    xinfeng: /(新豐|屏榮新豐|XiFang|Xifang)/i,
+    daxi: /(大溪|Daxi|屏榮大溪)/i,
+    changjia: /(長家|ChangJia)/i,
+    jinxin: /(晉欣|jinxin|鮮食廠)/i
+  }[key];
+  if (factoryNamePattern && factoryNamePattern.test(name) && /半成品/i.test(name)) return true;
 
   return false;
+}
+
+function summaryCompletenessScore(r){
+  if (!r) return -1;
+  const core = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate","topScrapAmt","topOverAmt","sharedAmt"];
+  return core.reduce((score, k) => {
+    const v = Number(r[k]);
+    return score + (Number.isFinite(v) && Math.abs(v) > 0 ? 1 : 0);
+  }, 0);
+}
+
+function mergeSummaryRows(oldRow, newRow){
+  if (!oldRow) return newRow;
+  if (!newRow) return oldRow;
+  const oldScore = summaryCompletenessScore(oldRow);
+  const newScore = summaryCompletenessScore(newRow);
+  if (newScore > oldScore) return Object.assign({}, oldRow, newRow);
+  if (newScore < oldScore) return oldRow;
+
+  const merged = Object.assign({}, oldRow);
+  for (const [k, v] of Object.entries(newRow)){
+    if (k === "date") continue;
+    const ov = Number(merged[k]);
+    const nv = Number(v);
+    if ((!Number.isFinite(ov) || Math.abs(ov) === 0) && Number.isFinite(nv) && Math.abs(nv) > 0) merged[k] = v;
+  }
+  return merged;
+}
+
+function buildDerivedSummaryFromDetails(details){
+  const days = new Map();
+  const groupsByDate = new Map();
+  for (const r of details || []){
+    if (!r || !r.date) continue;
+    if (!days.has(r.date)) {
+      days.set(r.date, {date:r.date, scrapAmt:0, overuseAmt:0, sharedAmt:0, topScrapAmt:0, topOverAmt:0});
+      groupsByDate.set(r.date, new Map());
+    }
+    const day = days.get(r.date);
+    const scrapAmt = Number(r.scrapAmt) || 0;
+    const overuseAmt = Number(r.overuseAmt) || 0;
+    day.scrapAmt += scrapAmt;
+    day.overuseAmt += overuseAmt;
+    if (isSharedRow(r)) day.sharedAmt += scrapAmt;
+
+    const gKey = `${safeStr(r.product).trim()}||${safeStr(r.semi).trim()}`;
+    const gm = groupsByDate.get(r.date);
+    if (!gm.has(gKey)) gm.set(gKey, {scrapAmt:0, overuseAmt:0});
+    const g = gm.get(gKey);
+    g.scrapAmt += scrapAmt;
+    g.overuseAmt += overuseAmt;
+  }
+  for (const [date, day] of days.entries()){
+    const groups = Array.from((groupsByDate.get(date) || new Map()).values());
+    day.topScrapAmt = groups.map(g => g.scrapAmt).sort((a,b)=>b-a).slice(0,10).reduce((a,b)=>a+b,0);
+    day.topOverAmt = groups.map(g => g.overuseAmt).sort((a,b)=>b-a).slice(0,10).reduce((a,b)=>a+b,0);
+  }
+  return days;
+}
+
+function dedupeFactoryData(target){
+  if (!target) return;
+
+  const detailsMap = new Map();
+  for (const r of target.details || []){
+    if (!r || !r.date) continue;
+    const k = [r.date,r.product,r.semi,r.order,r.output,r.scrapQty,r.scrapAmt,r.overuseQty,r.overuseAmt].join("|");
+    if (!detailsMap.has(k)) detailsMap.set(k, r);
+  }
+  target.details = Array.from(detailsMap.values()).sort((a,b)=>safeStr(a.date).localeCompare(safeStr(b.date)));
+
+  const sm = new Map();
+  for (const r of target.summary || []){
+    if (!r || !r.date) continue;
+    sm.set(r.date, mergeSummaryRows(sm.get(r.date), r));
+  }
+
+  // 若 summary 表的報廢/超用欄位因表頭差異沒讀到，從半成品明細補回金額，避免 KPI 顯示為 0。
+  const derived = buildDerivedSummaryFromDetails(target.details);
+  for (const [date, d] of derived.entries()){
+    const base = sm.get(date) || {date, sales:0, scrapAmt:0, overuseAmt:0, topScrapAmt:0, topOverAmt:0, sharedAmt:0};
+    if (!(Number(base.scrapAmt) > 0) && d.scrapAmt > 0) base.scrapAmt = d.scrapAmt;
+    if (!(Number(base.overuseAmt) > 0) && d.overuseAmt > 0) base.overuseAmt = d.overuseAmt;
+    if (!(Number(base.topScrapAmt) > 0) && d.topScrapAmt > 0) base.topScrapAmt = d.topScrapAmt;
+    if (!(Number(base.topOverAmt) > 0) && d.topOverAmt > 0) base.topOverAmt = d.topOverAmt;
+    if (!(Number(base.sharedAmt) > 0) && d.sharedAmt > 0) base.sharedAmt = d.sharedAmt;
+    const sales = Number(base.sales) || 0;
+    if (sales > 0){
+      base.scrapRate = (Number(base.scrapAmt) || 0) / sales;
+      base.overuseRate = (Number(base.overuseAmt) || 0) / sales;
+    }
+    const scrapAmt = Number(base.scrapAmt) || 0;
+    const overuseAmt = Number(base.overuseAmt) || 0;
+    base.topScrapShare = scrapAmt > 0 ? (Number(base.topScrapAmt) || 0) / scrapAmt : base.topScrapShare;
+    base.topOverShare = overuseAmt > 0 ? (Number(base.topOverAmt) || 0) / overuseAmt : base.topOverShare;
+    base.sharedShare = scrapAmt > 0 ? (Number(base.sharedAmt) || 0) / scrapAmt : base.sharedShare;
+    sm.set(date, base);
+  }
+
+  target.summary = Array.from(sm.values()).sort((a,b)=>safeStr(a.date).localeCompare(safeStr(b.date)));
 }
 
 function getWholeWeekRangeForMonth(year, month){
@@ -921,10 +1021,7 @@ async function loadFactoryFiles(key, files){
     }
   }
 
-  const sm = new Map();
-  for (const r of target.summary) sm.set(r.date, r);
-  target.summary = Array.from(sm.values()).sort((a,b)=>a.date.localeCompare(b.date));
-  target.details.sort((a,b)=>a.date.localeCompare(b.date));
+  dedupeFactoryData(target);
 }
 
 async function ensureDataForCurrentRange(){
@@ -1678,7 +1775,60 @@ function renderFactorySelector(){
   if (hint) hint.textContent = `已選擇 ${selected.length} / 2`;
 }
 
+function captureTimeSelection(){
+  return {
+    mode: state.mode,
+    year: $("yearSel") ? $("yearSel").value : "",
+    month: $("monthSel") ? $("monthSel").value : "",
+    weekStart: $("weekSel") ? $("weekSel").value : "",
+    rangeStart: $("rangeStart") ? $("rangeStart").value : "",
+    rangeEnd: $("rangeEnd") ? $("rangeEnd").value : ""
+  };
+}
+
+function applyModeVisibility(mode){
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  if ($("monthWrap")) $("monthWrap").classList.toggle("hidden", !["month","week"].includes(mode));
+  if ($("weekWrap")) $("weekWrap").classList.toggle("hidden", mode !== "week");
+  if ($("rangeWrap")) $("rangeWrap").classList.toggle("hidden", mode !== "range");
+}
+
+function restoreTimeSelection(keep){
+  if (!keep) return;
+  const mode = keep.mode || state.mode || "month";
+  state.mode = mode;
+
+  if ($("yearSel") && keep.year && Array.from($("yearSel").options).some(o => o.value === keep.year)) {
+    $("yearSel").value = keep.year;
+    renderMonthOptions();
+  }
+
+  if ($("monthSel") && keep.month && Array.from($("monthSel").options).some(o => o.value === keep.month)) {
+    $("monthSel").value = keep.month;
+  }
+
+  if ($("weekSel")) {
+    renderWeekOptions();
+    const weekOptions = Array.from($("weekSel").options).map(o => o.value);
+    if (keep.weekStart && weekOptions.includes(keep.weekStart)) {
+      $("weekSel").value = keep.weekStart;
+    } else if (keep.weekStart) {
+      const target = parseISO(keep.weekStart);
+      const match = state.weeksAll.find(w => {
+        const s = parseISO(w.start), e = parseISO(w.end);
+        return target && s && e && target >= s && target <= e;
+      });
+      if (match && weekOptions.includes(match.start)) $("weekSel").value = match.start;
+    }
+  }
+
+  if ($("rangeStart") && keep.rangeStart) $("rangeStart").value = keep.rangeStart;
+  if ($("rangeEnd") && keep.rangeEnd) $("rangeEnd").value = keep.rangeEnd;
+  applyModeVisibility(mode);
+}
+
 async function toggleFactorySelection(key){
+  const keepTime = captureTimeSelection();
   const selected = selectedFactoryKeys();
   if (selected.includes(key)) {
     state.selectedFactoryKeys = selected.filter(k => k !== key);
@@ -1689,7 +1839,7 @@ async function toggleFactorySelection(key){
   }
   state.mirrorTopSource = null;
   buildGlobalDatesFromManifest();
-  buildSelectors();
+  buildSelectors(keepTime);
   renderFactorySelector();
   renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); });
 }
@@ -1812,12 +1962,13 @@ function getLatestLoadedMonthKey(){
   return dates.length ? dates[dates.length-1].slice(0,7) : null;
 }
 
-function buildSelectors(){
+function buildSelectors(keep=null){
+  keep = keep || captureTimeSelection();
   const years = new Set();
   const monthsByYear = {};
   const weeks = new Map();
   const addMonthKey = (mk) => {
-    if (!mk) return;
+    if (!mk || !/^20\d{2}-\d{2}$/.test(mk)) return;
     const y = mk.slice(0,4), mm = mk.slice(5,7);
     years.add(y);
     monthsByYear[y] = monthsByYear[y] || new Set();
@@ -1825,40 +1976,54 @@ function buildSelectors(){
     const ms = new Date(Number(y), Number(mm)-1, 1);
     const me = new Date(Number(y), Number(mm), 0);
     let ws = weekStartTue(ms);
-    while (ws <= me){ const we = addDays(ws, 6); weeks.set(toISO(ws), {start:toISO(ws), end:toISO(we)}); ws = addDays(ws, 7); }
+    while (ws <= me){
+      const we = addDays(ws, 6);
+      weeks.set(toISO(ws), {start:toISO(ws), end:toISO(we)});
+      ws = addDays(ws, 7);
+    }
   };
+
   const selectorKeys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
   for (const k of selectorKeys){
-    for (const p of (state.factories[k]?.files || [])) addMonthKey(monthKeyFromFilePath(p));
+    for (const p of (state.factories[k]?.files || [])) addMonthKey(monthKeyFromFilePath(p, keep?.year ? Number(keep.year) : null));
     for (const r of [...(state.factories[k]?.summary || []), ...(state.factories[k]?.details || [])]) if (r.date) addMonthKey(r.date.slice(0,7));
   }
-  if (!selectorKeys.length) {
+  if (!years.size) {
     const y = String(new Date().getFullYear());
     years.add(y);
     monthsByYear[y] = new Set([String(new Date().getMonth()+1).padStart(2,"0")]);
   }
+
   state.years = Array.from(years).sort();
   state.monthsByYear = {};
   for (const [y,set] of Object.entries(monthsByYear)) state.monthsByYear[y] = Array.from(set).sort();
-  state.weeksAll = Array.from(weeks.values()).sort((a,b)=>a.start.localeCompare(b.start));
+  state.weeksAll = Array.from(weeks.values()).sort((a,b)=>safeStr(a.start).localeCompare(safeStr(b.start)));
 
-  const prevYear = $("yearSel").value;
+  const prevYear = keep?.year || ($("yearSel") ? $("yearSel").value : "");
   $("yearSel").innerHTML = state.years.map(y=>`<option value="${y}">${y}</option>`).join("");
   const latestYear = (state.dateMax || toISO(new Date())).slice(0,4);
   $("yearSel").value = state.years.includes(prevYear) ? prevYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1) || ""));
-  renderMonthOptions();
 
-  const prevMonth = $("monthSel").value;
+  renderMonthOptions();
+  const prevMonth = keep?.month || ($("monthSel") ? $("monthSel").value : "");
   const months = state.monthsByYear[$("yearSel").value] || [];
   const latestMonth = (state.dateMax || "").slice(5,7);
   $("monthSel").value = months.includes(prevMonth) ? prevMonth : (months.includes(latestMonth) ? latestMonth : (months.at(-1) || ""));
-  renderWeekOptions();
-  const latestWeek = state.weeksAll.filter(w => w.start <= state.dateMax && w.end >= state.dateMax).pop() || state.weeksAll.at(-1);
-  if (latestWeek && !$("weekSel").value) $("weekSel").value = latestWeek.start;
-  $("rangeStart").value = $("rangeStart").value || state.dateMin;
-  $("rangeEnd").value = $("rangeEnd").value || state.dateMax;
-}
 
+  renderWeekOptions();
+  const weekOptions = Array.from($("weekSel").options).map(o => o.value);
+  const prevWeek = keep?.weekStart || "";
+  if (prevWeek && weekOptions.includes(prevWeek)) {
+    $("weekSel").value = prevWeek;
+  } else {
+    const latestWeek = state.weeksAll.filter(w => w.start <= state.dateMax && w.end >= state.dateMax).pop() || state.weeksAll.at(-1);
+    if (latestWeek && weekOptions.includes(latestWeek.start)) $("weekSel").value = latestWeek.start;
+  }
+
+  if ($("rangeStart")) $("rangeStart").value = keep?.rangeStart || $("rangeStart").value || state.dateMin;
+  if ($("rangeEnd")) $("rangeEnd").value = keep?.rangeEnd || $("rangeEnd").value || state.dateMax;
+  applyModeVisibility(keep?.mode || state.mode || "month");
+}
 async function ensureDataForCurrentRange(){
   const selected = selectedFactoryKeys();
   if (!selected.length) {
