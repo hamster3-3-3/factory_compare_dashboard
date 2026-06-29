@@ -507,6 +507,50 @@ function sheetNameToISO(sheetName, yearHint){
   return null;
 }
 
+
+function matchWasteFileSpan(fileName){
+  const s = safeStr(fileName);
+  // Supports both old monthly half-product files and newer daily files:
+  // 2026-0401-0430..., 20260401-0430..., 2026/04/... (0401-0430).xlsx.
+  return s.match(/(20\d{2})-(\d{2})(\d{2})-(\d{2})(\d{2})/i)
+      || s.match(/(20\d{2})(\d{2})(\d{2})-(\d{2})(\d{2})/i)
+      || s.match(/^(20\d{2})\/(?:0[1-9]|1[0-2])\/.*?(\d{2})(\d{2})-(\d{2})(\d{2})/i)
+      || s.match(/^(20\d{2})\/(?:0[1-9]|1[0-2])\/.*?\((\d{2})(\d{2})-(\d{2})(\d{2})\)/i);
+}
+
+function parseFileStartFromName(fileName){
+  const m = matchWasteFileSpan(fileName);
+  if (!m) return null;
+  const y = Number(m[1]), mm = Number(m[2]), dd = Number(m[3]);
+  if (!Number.isFinite(y) || !Number.isFinite(mm) || !Number.isFinite(dd)) return null;
+  return new Date(y, mm - 1, dd);
+}
+
+function parseFileSpanFromName(fileName){
+  const m = matchWasteFileSpan(fileName);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const sm = Number(m[2]), sd = Number(m[3]);
+  const em = Number(m[4]), ed = Number(m[5]);
+  if (![y,sm,sd,em,ed].every(Number.isFinite)) return null;
+  let ey = y;
+  if (em < sm || (em === sm && ed < sd)) ey = y + 1;
+  return { start: new Date(y, sm - 1, sd), end: new Date(ey, em - 1, ed) };
+}
+
+function ymToIndex(ym){
+  const m = safeStr(ym).match(/^(20\d{2})-(\d{2})$/);
+  if (!m) return null;
+  return Number(m[1]) * 12 + Number(m[2]);
+}
+
+function shiftISOByMonths(iso, deltaMonths){
+  const d = parseISO(iso);
+  if (!d || isNaN(d)) return iso;
+  d.setMonth(d.getMonth() + deltaMonths);
+  return toISO(d);
+}
+
 function parseSummaryFromWB(wb, fileName){
   const sname = wb.SheetNames.find(n => n.replace(/\s+/g,"").includes("日別報廢率總表"));
   if (!sname) return [];
@@ -561,6 +605,35 @@ function parseSummaryFromWB(wb, fileName){
       sharedShare: num(row[idxSharedShare],0)
     });
   }
+  // 舊版「長家廠半成品管理表(0401-0430).xlsx」等月檔，有時日別報廢率總表的日期欄會殘留上月快取。
+  // 長家單廠頁面會用檔名起迄月份修正此情形；總覽也需套用，否則 5 月前舊格式會被歸到錯誤月份或被範圍篩掉。
+  const fileStart = parseFileStartFromName(fileName);
+  const fileSpan = parseFileSpanFromName(fileName);
+  if (fileStart && out.length){
+    const expYM = toISO(fileStart).slice(0,7);
+    const coveredMonths = fileSpan ? monthKeysBetween(toISO(fileSpan.start), toISO(fileSpan.end)) : [expYM];
+    const counts = new Map();
+    for (const r of out){
+      const ym = safeStr(r.date).slice(0,7);
+      counts.set(ym, (counts.get(ym) || 0) + 1);
+    }
+    let domYM = null, domN = 0;
+    for (const [k, v] of counts.entries()){
+      if (v > domN){ domN = v; domYM = k; }
+    }
+    const isCovered = domYM && coveredMonths.includes(domYM);
+    if (!isCovered){
+      const a = ymToIndex(domYM);
+      const b = ymToIndex(expYM);
+      if (a != null && b != null && domYM !== expYM){
+        const delta = b - a;
+        if (Math.abs(delta) <= 2){
+          for (const r of out) r.date = shiftISOByMonths(r.date, delta);
+        }
+      }
+    }
+  }
+
   return out;
 }
 
@@ -671,7 +744,9 @@ function parseDetailsFromWB(wb, fileName){
 
   for (const sn of wb.SheetNames){
     const n = safeStr(sn).replace(/\s+/g,"");
-    if (!n.includes("合計")) continue;
+    // 5 月前長家舊格式常使用「分析日報」分頁，不一定是每日「xx合計」分頁。
+    // 因此這裡要納入：合計、分析日報，或可由分頁名稱推回日期的日別分頁。
+    if (!n.includes("合計") && !n.includes("分析日報") && !sheetNameToISO(sn, yearHint)) continue;
     if (/各日合計|日別報廢率總表|報廢率總表|前10名|共用類|KPI|名詞定義|下拉式選單|空白/i.test(n)) continue;
     const ws = wb.Sheets[sn];
     const fixedISO = sheetNameToISO(sn, yearHint);
@@ -704,7 +779,7 @@ function parseDetailsFromWB(wb, fileName){
     };
     const idx = {
       date: findContains("日期") >= 0 ? findContains("日期") : null,
-      product: (()=>{ const x=find("商品名稱","商品名","品名"); return x>=0?x:1; })(),
+      product: (()=>{ const x=find("商品名稱","商品名","品名","商品"); return x>=0?x:1; })(),
       semi: (()=>{ const x=find("半成品名稱","半成品名","半成品","共用類"); return x>=0?x:2; })(),
       price: (()=>{ const x=find("單價","半成品單價"); return x>=0?x:3; })(),
       order: (()=>{ const x=find("訂單量","訂單需求"); return x>=0?x:findContains("訂單"); })(),
