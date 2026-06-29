@@ -295,14 +295,16 @@ const FACTORIES = {
     siteUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
     color: "#2563eb",
-    wastePattern: /(半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
+    // 新豐部分月份會以「新豐廠生產管理報表」「【JFM指導】...」命名；
+    // 不能只篩「半成品報廢管理表、半成品生產管理日報」。
+    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表|JFM指導).*\.xlsx$/i
   },
   daxi: {
     name: "屏榮大溪",
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
-    wastePattern: /(半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
+    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表|JFM指導).*\.xlsx$/i
   },
   changjia: {
     name: "長家",
@@ -466,13 +468,24 @@ async function fetchWorkbook(url){
   return XLSX.read(ab, {type:"array", cellDates:true});
 }
 
+function currentYearFallback(){
+  try{
+    const y = $("yearSel") && $("yearSel").value;
+    if (/^20\d{2}$/.test(String(y))) return Number(y);
+  }catch(_){}
+  if (state && state.dateMax && /^20\d{2}/.test(state.dateMax)) return Number(state.dateMax.slice(0,4));
+  return new Date().getFullYear();
+}
 function parseFileYearHint(fileName){
   const s = safeStr(fileName);
   let m = s.match(/(20\d{2})/);
   if (m) return +m[1];
   m = s.match(/(?:^|[^\d])(1\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})/);
   if (m) return 1911 + +m[1];
-  return null;
+
+  // 有些新豐 / 長家檔名只有 0407-13、0609-15，沒有年份。
+  // 這類檔案仍需以目前選擇年度判定，否則會被月份篩選排除，或合計分頁無法轉成日期。
+  return currentYearFallback();
 }
 function sheetNameToISO(sheetName, yearHint){
   const n = safeStr(sheetName).replace(/\s+/g,"");
@@ -749,7 +762,7 @@ function parseDetailsFromWB(wb, fileName){
 }
 
 
-function monthKeyFromFilePath(p){
+function monthKeyFromFilePath(p, fallbackYear=null){
   const s = safeStr(p);
   const padMonth = m => String(Number(m)).padStart(2,"0");
 
@@ -773,8 +786,8 @@ function monthKeyFromFilePath(p){
   m = s.match(/(?:^|[^\d])(1\d{2})[.\/-](0?[1-9]|1[0-2])[.\/-]\d{1,2}/);
   if (m) return `${1911 + Number(m[1])}-${padMonth(m[2])}`;
 
-  // If the path contains a year and the file name only contains month/day range, e.g. 2026/.../0601-0622.xlsx.
-  const y = parseFileYearHint(s);
+  // If the path contains a year, or the UI already provides a target year, and the file name only contains month/day range, e.g. 0601-0622.xlsx.
+  const y = fallbackYear || parseFileYearHint(s);
   if (y) {
     m = s.match(/(?:^|[^\d])(0[1-9]|1[0-2])\d{2}\D+(?:0?[1-9]|1[0-2])?\d{1,2}/);
     if (m) return `${y}-${m[1]}`;
@@ -806,7 +819,9 @@ function recentMonthKeysFromManifest(files, count=3){
 
 function filesForMonthKeys(files, monthKeys){
   const set = new Set(monthKeys || []);
-  return (files || []).filter(p => set.has(monthKeyFromFilePath(p)));
+  const years = Array.from(new Set((monthKeys || []).map(k => safeStr(k).slice(0,4)).filter(y => /^20\d{2}$/.test(y))));
+  const fallbackYear = years.length === 1 ? Number(years[0]) : null;
+  return (files || []).filter(p => set.has(monthKeyFromFilePath(p, fallbackYear)));
 }
 
 function isLikelyFactoryWorkbook(key, path){
@@ -818,10 +833,16 @@ function isLikelyFactoryWorkbook(key, path){
   const f = FACTORIES[key];
   if (f && f.wastePattern && f.wastePattern.test(name)) return true;
 
-  // 長家部分月份的檔名會使用「長家廠生產管理報表」「【JFM指導】...」等名稱，
-  // 不會命中原本的「半成品生產管理日報」篩選，導致 manifest 中大多數 5 月檔案沒有被載入。
+  // 新豐、長家部分月份的檔名會使用「廠別＋生產管理報表」「【JFM指導】...」等名稱，
+  // 不會命中原本的「半成品生產管理日報」篩選，導致 manifest 中多數 5 月檔案沒有被載入。
+  if (key === "xinfeng") {
+    return /(新豐|屏榮新豐|XiFang|Xifang|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
+  }
   if (key === "changjia") {
     return /(長家|ChangJia|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
+  }
+  if (key === "daxi") {
+    return /(大溪|Daxi|屏榮大溪|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
   }
 
   return false;
