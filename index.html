@@ -309,7 +309,9 @@ const FACTORIES = {
     siteUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
     color: "#a16207",
-    wastePattern: /(半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
+    // 長家的 manifest 檔名不一定只寫「半成品生產管理日報」，有些月份會用「生產管理報表 / JFM指導」命名。
+    // 若這裡只篩「報廢管理表、日報」，5 月相關檔案容易被排除，導致只讀到少數檔案。
+    wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表|JFM指導).*\.xlsx$/i
   },
   jinxin: {
     name: "晉欣",
@@ -466,29 +468,27 @@ async function fetchWorkbook(url){
 
 function parseFileYearHint(fileName){
   const s = safeStr(fileName);
-  let m = s.match(/(20\d{2})-(\d{2})(\d{2})-/);
+  let m = s.match(/(20\d{2})/);
   if (m) return +m[1];
-  m = s.match(/(?:^|[^\d])(1\d{2})\.(\d{2})\.(\d{2})/);
+  m = s.match(/(?:^|[^\d])(1\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})/);
   if (m) return 1911 + +m[1];
-  m = s.match(/(20\d{2})/);
-  if (m) return +m[1];
   return null;
 }
 function sheetNameToISO(sheetName, yearHint){
   const n = safeStr(sheetName).replace(/\s+/g,"");
-  let m = n.match(/^(\d{2})[\/-]?(\d{2})(?:合計)?$/);
-  if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+  if (!yearHint) return null;
 
-  // month total sheet, e.g. 0501-31合計 / 0501~0531合計 / 05-01~05-31合計
-  m = n.match(/^(\d{2})[\/-]?(\d{2})\D+(\d{1,2})(?:合計)?$/);
-  if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
-  m = n.match(/^(\d{2})[\/-]?(\d{2})\D+(\d{2})[\/-]?(\d{2})(?:合計)?$/);
-  if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+  // Daily sheets may be named 0526合計, 05/26合計, 5/26合計, 5-26合計, or 合計0526.
+  let m = n.match(/^(\d{1,2})[\/.-]?(\d{1,2})(?:合計)?$/);
+  if (m) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+  m = n.match(/^合計(\d{1,2})[\/.-]?(\d{1,2})$/);
+  if (m) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
 
-  m = n.match(/^合計(\d{2})[\/-]?(\d{2})$/);
-  if (m && yearHint) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
+  // Range/total sheets, e.g. 0501-31合計, 0501~0531合計, 05-01~05-31合計, 5/1-5/31合計.
+  m = n.match(/^(\d{1,2})[\/.-]?(\d{1,2})\D+(?:\d{1,2}[\/.-]?)?(\d{1,2})(?:合計)?$/);
+  if (m) return toISO(new Date(yearHint, +m[1]-1, +m[2]));
   m = n.match(/^合計(\d{4})$/);
-  if (m && yearHint) return toISO(new Date(yearHint, +m[1].slice(0,2)-1, +m[1].slice(2,4)));
+  if (m) return toISO(new Date(yearHint, +m[1].slice(0,2)-1, +m[1].slice(2,4)));
   return null;
 }
 
@@ -751,14 +751,37 @@ function parseDetailsFromWB(wb, fileName){
 
 function monthKeyFromFilePath(p){
   const s = safeStr(p);
-  let m = s.match(/^(20\d{2})\/(0[1-9]|1[0-2])\//);
+  const padMonth = m => String(Number(m)).padStart(2,"0");
+
+  // Prefer explicit year/month folder structures: 2026/05/..., 2026/5/..., 2026-05/..., 2026_05/...
+  let m = s.match(/(?:^|[\/\-_])(20\d{2})[\/\-_](0?[1-9]|1[0-2])(?:[\/\-_]|月|$)/);
+  if (m) return `${m[1]}-${padMonth(m[2])}`;
+
+  // Common file names: 2026-0501-0531, 2026.0602-0608, 2026_0601_0622, 20260501-0531.
+  m = s.match(/(20\d{2})[.\-_\/]?(0[1-9]|1[0-2])\d{2}\D+(?:0?[1-9]|1[0-2])?\d{1,2}/);
   if (m) return `${m[1]}-${m[2]}`;
-  m = s.match(/(20\d{2})-(\d{2})(\d{2})-(\d{2})(\d{2})/);
-  if (m) return `${m[1]}-${m[2]}`;
-  m = s.match(/(?:^|[^\d])(1\d{2})\.(\d{2})\.(\d{2})/);
-  if (m) return `${1911 + Number(m[1])}-${m[2]}`;
-  m = s.match(/(20\d{2})(\d{2})(\d{2})[-_~～]/);
-  if (m) return `${m[1]}-${m[2]}`;
+
+  // Date range written as 2026-05-01~05-31 / 2026/5/1-5/31.
+  m = s.match(/(20\d{2})[年.\-_\/](0?[1-9]|1[0-2])[月.\-_\/]\d{1,2}/);
+  if (m) return `${m[1]}-${padMonth(m[2])}`;
+
+  // Weekly report names such as 2026-6(W2), 2026-06(W2), 2026年6月.
+  m = s.match(/(20\d{2})[年.\-_\/]?(0?[1-9]|1[0-2])(?:月|[\s\-_]*[（(]?W\d|[\s\-_]*週)/i);
+  if (m) return `${m[1]}-${padMonth(m[2])}`;
+
+  // ROC year dates: 115.05.27 / 115-5-27 / 115/05/27.
+  m = s.match(/(?:^|[^\d])(1\d{2})[.\/-](0?[1-9]|1[0-2])[.\/-]\d{1,2}/);
+  if (m) return `${1911 + Number(m[1])}-${padMonth(m[2])}`;
+
+  // If the path contains a year and the file name only contains month/day range, e.g. 2026/.../0601-0622.xlsx.
+  const y = parseFileYearHint(s);
+  if (y) {
+    m = s.match(/(?:^|[^\d])(0[1-9]|1[0-2])\d{2}\D+(?:0?[1-9]|1[0-2])?\d{1,2}/);
+    if (m) return `${y}-${m[1]}`;
+    m = s.match(/(?:^|[^\d])(0?[1-9]|1[0-2])月/);
+    if (m) return `${y}-${padMonth(m[1])}`;
+  }
+
   return null;
 }
 
@@ -784,6 +807,24 @@ function recentMonthKeysFromManifest(files, count=3){
 function filesForMonthKeys(files, monthKeys){
   const set = new Set(monthKeys || []);
   return (files || []).filter(p => set.has(monthKeyFromFilePath(p)));
+}
+
+function isLikelyFactoryWorkbook(key, path){
+  const name = baseName(path);
+  if (!/\.(xlsx|xlsm|xls)$/i.test(name)) return false;
+  if (/^(~\$|\.)/.test(name)) return false;
+  if (/備份|backup|old|舊檔|測試/i.test(name)) return false;
+
+  const f = FACTORIES[key];
+  if (f && f.wastePattern && f.wastePattern.test(name)) return true;
+
+  // 長家部分月份的檔名會使用「長家廠生產管理報表」「【JFM指導】...」等名稱，
+  // 不會命中原本的「半成品生產管理日報」篩選，導致 manifest 中大多數 5 月檔案沒有被載入。
+  if (key === "changjia") {
+    return /(長家|ChangJia|JFM指導|生產管理報表|半成品).*\.(xlsx|xlsm|xls)$/i.test(name);
+  }
+
+  return false;
 }
 
 function getWholeWeekRangeForMonth(year, month){
@@ -875,7 +916,7 @@ async function ensureDataForCurrentRange(){
 async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => f.wastePattern.test(baseName(p)));
+  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
   return {
     summary: [],
     details: [],
@@ -1630,7 +1671,7 @@ async function toggleFactorySelection(key){
 async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => f.wastePattern.test(baseName(p)));
+  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
   return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set() };
 }
 
