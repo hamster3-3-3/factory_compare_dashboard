@@ -236,7 +236,9 @@
             </select>
             <select id="slotATopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
+              <option value="scrapRate">報廢率</option>
               <option value="overuseAmt">超用金額</option>
+              <option value="overuseRate">超用率</option>
             </select>
             <button id="commonTopBtnA" type="button" class="seg-btn" title="讓右側表格依照左側目前半成品排序顯示">對方廠共有</button>
           </div>
@@ -263,7 +265,9 @@
             </select>
             <select id="slotBTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
+              <option value="scrapRate">報廢率</option>
               <option value="overuseAmt">超用金額</option>
+              <option value="overuseRate">超用率</option>
             </select>
             <button id="commonTopBtnB" type="button" class="seg-btn" title="讓左側表格依照右側目前半成品排序顯示">對方廠共有</button>
           </div>
@@ -1306,6 +1310,26 @@ function normalizeCommonSemiName(name){
     .trim();
 }
 
+function topRowNumber(v){
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function topRowQtyFromRate(row, qtyKey, rateKey){
+  const qty = Number(row[qtyKey]);
+  if (Number.isFinite(qty)) return qty;
+  const rate = Number(row[rateKey]);
+  const order = Number(row.order);
+  if (Number.isFinite(rate) && Number.isFinite(order) && order > 0) return rate * order;
+  return 0;
+}
+
+function completeTopMetrics(o){
+  o.scrapRate = o.order > 0 ? o.scrapQty / o.order : null;
+  o.overuseRate = o.order > 0 ? o.overuseQty / o.order : null;
+  return o;
+}
+
 function aggregateTopBySemi(details, metric, classFilter="all"){
   const m = new Map();
 
@@ -1322,25 +1346,39 @@ function aggregateTopBySemi(details, metric, classFilter="all"){
         normSemi,
         productSet: new Set(),
         semi: r.semi,
+        order: 0,
+        scrapQty: 0,
+        overuseQty: 0,
         scrapAmt: 0,
-        overuseAmt: 0
+        overuseAmt: 0,
+        scrapRate: null,
+        overuseRate: null
       });
     }
 
     const o = m.get(normSemi);
-    o.scrapAmt += +r.scrapAmt || 0;
-    o.overuseAmt += +r.overuseAmt || 0;
+    o.order += topRowNumber(r.order);
+    o.scrapQty += topRowQtyFromRate(r, "scrapQty", "scrapRate");
+    o.overuseQty += topRowQtyFromRate(r, "overuseQty", "overuseRate");
+    o.scrapAmt += topRowNumber(r.scrapAmt);
+    o.overuseAmt += topRowNumber(r.overuseAmt);
     if (r.product) o.productSet.add(r.product);
   }
 
   return Array.from(m.values()).map(o => {
+    completeTopMetrics(o);
     const products = Array.from(o.productSet);
     return {
       normSemi: o.normSemi,
       product: products.slice(0, 2).join("、") + (products.length > 2 ? ` 等${products.length}項` : ""),
       semi: o.semi,
+      order: o.order,
+      scrapQty: o.scrapQty,
+      overuseQty: o.overuseQty,
       scrapAmt: o.scrapAmt,
       overuseAmt: o.overuseAmt,
+      scrapRate: o.scrapRate,
+      overuseRate: o.overuseRate,
       exists: true
     };
   });
@@ -1355,14 +1393,32 @@ function aggregateTopByProductSemi(details, metric, classFilter="all"){
     if (classFilter === "nonShared" && shared) continue;
 
     const key = `${r.product}||${r.semi}`;
-    if (!m.has(key)) m.set(key, {product:r.product, semi:r.semi, scrapAmt:0, overuseAmt:0});
+    if (!m.has(key)) {
+      m.set(key, {
+        product: r.product,
+        semi: r.semi,
+        order: 0,
+        scrapQty: 0,
+        overuseQty: 0,
+        scrapAmt: 0,
+        overuseAmt: 0,
+        scrapRate: null,
+        overuseRate: null
+      });
+    }
 
     const o = m.get(key);
-    o.scrapAmt += +r.scrapAmt || 0;
-    o.overuseAmt += +r.overuseAmt || 0;
+    o.order += topRowNumber(r.order);
+    o.scrapQty += topRowQtyFromRate(r, "scrapQty", "scrapRate");
+    o.overuseQty += topRowQtyFromRate(r, "overuseQty", "overuseRate");
+    o.scrapAmt += topRowNumber(r.scrapAmt);
+    o.overuseAmt += topRowNumber(r.overuseAmt);
   }
 
-  return Array.from(m.values()).sort((a,b)=>(b[metric]||0)-(a[metric]||0)).slice(0,10);
+  return Array.from(m.values())
+    .map(completeTopMetrics)
+    .sort((a,b)=>(Number.isFinite(Number(b[metric])) ? Number(b[metric]) : -Infinity) - (Number.isFinite(Number(a[metric])) ? Number(a[metric]) : -Infinity))
+    .slice(0,10);
 }
 
 function getSemiOrderFromRows(rows){
@@ -1390,7 +1446,9 @@ function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
         product: "無該半成品",
         semi: item.semiLabel,
         scrapAmt: null,
+        scrapRate: null,
         overuseAmt: null,
+        overuseRate: null,
         exists: false
       });
     }
@@ -1408,6 +1466,18 @@ function syncCommonTopButtons(){
 
 function formatTopMoney(v){
   return Number.isFinite(Number(v)) ? fmtMoney(v) : "—";
+}
+function topMetricColumnLabel(metric){
+  return {
+    scrapAmt: "報廢金額",
+    scrapRate: "報廢率",
+    overuseAmt: "超用金額",
+    overuseRate: "超用率"
+  }[metric] || "數值";
+}
+function formatTopValue(v, metric){
+  if (["scrapRate", "overuseRate"].includes(metric)) return fmtPct(v);
+  return formatTopMoney(v);
 }
 
 function renderTopTables(data){
@@ -1867,6 +1937,12 @@ function renderTopTables(data){
     details: slots[idx].detailRows
   }));
 
+  for (const cfg of config){
+    const tbody = $(cfg.tbody);
+    const valueTh = tbody?.closest("table")?.querySelector("thead th:last-child");
+    if (valueTh) valueTh.textContent = topMetricColumnLabel(cfg.metric);
+  }
+
   let sourceRows = null, sourceOrder = null;
   if (state.mirrorTopSource === "A" && config[0]) { sourceRows = aggregateTopByProductSemi(config[0].details, config[0].metric, config[0].classFilter); sourceOrder = getSemiOrderFromRows(sourceRows); }
   if (state.mirrorTopSource === "B" && config[1]) { sourceRows = aggregateTopByProductSemi(config[1].details, config[1].metric, config[1].classFilter); sourceOrder = getSemiOrderFromRows(sourceRows); }
@@ -1879,7 +1955,7 @@ function renderTopTables(data){
     else rows = aggregateTopByProductSemi(cfg.details, cfg.metric, cfg.classFilter);
 
     const emptyText = state.mirrorTopSource ? "目前範圍無可對照半成品明細資料" : cfg.classFilter === "shared" ? "目前範圍無共用類明細資料" : cfg.classFilter === "nonShared" ? "目前範圍無非共用類明細資料" : "目前範圍無明細資料";
-    $(cfg.tbody).innerHTML = rows.map((r,j)=>`<tr><td class="mono">${j+1}</td><td>${r.product || "—"}</td><td class="muted">${r.semi || "—"}</td><td class="text-right mono">${r.exists === false ? "—" : formatTopMoney(r[cfg.metric])}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
+    $(cfg.tbody).innerHTML = rows.map((r,j)=>`<tr><td class="mono">${j+1}</td><td>${r.product || "—"}</td><td class="muted">${r.semi || "—"}</td><td class="text-right mono">${r.exists === false ? "—" : formatTopValue(r[cfg.metric], cfg.metric)}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
   }
 }
 
