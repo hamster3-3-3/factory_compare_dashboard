@@ -218,8 +218,8 @@
               <option value="sales">營業額</option>
               <option value="scrapAmt">報廢額</option>
               <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">多產額</option>
-              <option value="overuseAmtB" data-post-may-only="1">超用額</option>
+              <option value="overuseAmt">超用A(多產)</option>
+              <option value="overuseAmtB" data-post-may-only="1">超用B(多產-廢棄)</option>
               <option value="overuseRate">超用率</option>
             </select>
           </div>
@@ -514,8 +514,8 @@ function isPostMayOveruseLayout(data=null){
 }
 function overuseAmtAValue(row){ return Number(row?.overuseAmt) || 0; }
 function overuseAmtBValue(row){ return overuseAmtAValue(row) - (Number(row?.scrapAmt) || 0); }
-function overuseAmtALabel(){ return state._postMayOveruseLayout ? "多產額" : "超用金額(多產-廢棄)"; }
-function overuseAmtBLabel(){ return "超用額"; }
+function overuseAmtALabel(){ return state._postMayOveruseLayout ? "超用A(多產)" : "超用金額(多產-廢棄)"; }
+function overuseAmtBLabel(){ return "超用B(多產-廢棄)"; }
 function metricLabel(k){
   if (k === "overuseAmt") return overuseAmtALabel();
   if (k === "overuseAmtB") return overuseAmtBLabel();
@@ -526,6 +526,11 @@ function metricLabel(k){
     topOverAmt:"超用前10名金額", topOverShare:"超用前10名構成比",
     sharedAmt:"共用類廢棄金額", sharedShare:"共用類廢棄構成比"
   }[k] || k;
+}
+function metricLabelForChart(k){
+  if (k === "overuseAmt") return state._postMayOveruseLayout ? "超用A" : metricLabel(k);
+  if (k === "overuseAmtB") return state._postMayOveruseLayout ? "超用B" : metricLabel(k);
+  return metricLabel(k);
 }
 function displayMetricKeys(data=null){
   const postMay = isPostMayOveruseLayout(data);
@@ -853,28 +858,46 @@ function parseDetailsFromWB(wb, fileName){
       const order = asNumber(row[idx.order]);
       const output = asNumber(row[idx.outputKg]);
       const price = asNumber(row[idx.price]);
+      const expandQty = asNumber(row[idx.expandQty]);
+      const actualQty = asNumber(row[idx.actualQty]);
+      const refillQtyNew = asNumber(row[idx.refillQtyNew]);
       const scrapQty = asNumber(row[idx.scrapQty]);
       const scrapAmt = asNumber(row[idx.scrapAmt]);
       const overuseQty = asNumber(row[idx.overuseQty]);
       const overuseAmt = asNumber(row[idx.overuseAmt]);
+      let expandRate = normalizeExcelRate(row[idx.expandRate]);
+      let actualRate = normalizeExcelRate(row[idx.actualRate]);
+      let refillRateNew = normalizeExcelRate(row[idx.refillRateNew]);
       let prodRate = normalizeExcelRate(row[idx.outputRate]);
       let scrapRate = normalizeExcelRate(row[idx.scrapRate]);
       let overuseRate = normalizeExcelRate(row[idx.overuseRate]);
-      if (!Number.isFinite(prodRate) && order > 0 && Number.isFinite(output)) prodRate = output / order;
-      if (!Number.isFinite(scrapRate) && order > 0 && Number.isFinite(scrapQty)) scrapRate = scrapQty / order;
-      if (!Number.isFinite(overuseRate) && order > 0 && Number.isFinite(overuseQty)) overuseRate = overuseQty / order;
+      if (!Number.isFinite(expandRate) && Number.isFinite(order) && order > 0 && Number.isFinite(expandQty)) expandRate = expandQty / order;
+      if (!Number.isFinite(actualRate) && Number.isFinite(order) && order > 0 && Number.isFinite(actualQty)) actualRate = actualQty / order;
+      if (!Number.isFinite(refillRateNew) && Number.isFinite(order) && order > 0 && Number.isFinite(refillQtyNew)) refillRateNew = refillQtyNew / order;
+      if (!Number.isFinite(prodRate) && Number.isFinite(order) && order > 0 && Number.isFinite(output)) prodRate = output / order;
+      if (!Number.isFinite(scrapRate) && Number.isFinite(order) && order > 0 && Number.isFinite(scrapQty)) scrapRate = scrapQty / order;
+      if (!Number.isFinite(overuseRate) && Number.isFinite(order) && order > 0 && Number.isFinite(overuseQty)) overuseRate = overuseQty / order;
       rows.push({
         date: iso, product, semi,
         order: Number.isFinite(order)?order:null,
         output: Number.isFinite(output)?output:null,
+        outQty: Number.isFinite(output)?output:null,
         price: Number.isFinite(price)?price:null,
+        unitPrice: Number.isFinite(price)?price:null,
+        expandQty: Number.isFinite(expandQty)?expandQty:null,
+        expandRate: Number.isFinite(expandRate)?expandRate:null,
+        actualQty: Number.isFinite(actualQty)?actualQty:null,
+        actualRate: Number.isFinite(actualRate)?actualRate:null,
+        refillQtyNew: Number.isFinite(refillQtyNew)?refillQtyNew:null,
+        refillRateNew: Number.isFinite(refillRateNew)?refillRateNew:null,
         prodRate: Number.isFinite(prodRate)?prodRate:null,
         scrapQty: Number.isFinite(scrapQty)?scrapQty:null,
         scrapRate: Number.isFinite(scrapRate)?scrapRate:null,
         scrapAmt: Number.isFinite(scrapAmt)?scrapAmt:null,
         overuseQty: Number.isFinite(overuseQty)?overuseQty:null,
         overuseRate: Number.isFinite(overuseRate)?overuseRate:null,
-        overuseAmt: Number.isFinite(overuseAmt)?overuseAmt:null
+        overuseAmt: Number.isFinite(overuseAmt)?overuseAmt:null,
+        _detailFormat: "new"
       });
     }
     return rows;
@@ -1124,6 +1147,29 @@ function buildDerivedSummaryFromDetails(details){
   return days;
 }
 
+function mergeDetailRowsKeepMetrics(base, incoming){
+  if (!base) return incoming;
+  if (!incoming) return base;
+  const out = Object.assign({}, base);
+  const preferKeys = [
+    "outQty","unitPrice","expandQty","expandRate","actualQty","actualRate",
+    "refillQtyNew","refillRateNew","refillQty","refillRate","refill",
+    "prodRate","diffQty","diffAmt","scrapQty","scrapRate","scrapAmt",
+    "overuseQty","overuseRate","overuseAmt","price","order","output"
+  ];
+  for (const k of preferKeys){
+    const cur = out[k];
+    const nxt = incoming[k];
+    const curOk = cur !== null && cur !== undefined && cur !== "" && !(typeof cur === "number" && !Number.isFinite(cur));
+    const nxtOk = nxt !== null && nxt !== undefined && nxt !== "" && !(typeof nxt === "number" && !Number.isFinite(nxt));
+    if ((!curOk && nxtOk) || (incoming._detailFormat === "new" && nxtOk && ["expandQty","expandRate","actualQty","actualRate","refillQtyNew","refillRateNew"].includes(k))) {
+      out[k] = nxt;
+    }
+  }
+  if (incoming._detailFormat === "new") out._detailFormat = "new";
+  return out;
+}
+
 function dedupeFactoryData(target){
   if (!target) return;
 
@@ -1132,6 +1178,7 @@ function dedupeFactoryData(target){
     if (!r || !r.date) continue;
     const k = [r.date,r.product,r.semi,r.order,r.output,r.scrapQty,r.scrapAmt,r.overuseQty,r.overuseAmt].join("|");
     if (!detailsMap.has(k)) detailsMap.set(k, r);
+    else detailsMap.set(k, mergeDetailRowsKeepMetrics(detailsMap.get(k), r));
   }
   target.details = Array.from(detailsMap.values()).sort((a,b)=>safeStr(a.date).localeCompare(safeStr(b.date)));
 
@@ -1689,13 +1736,13 @@ function renderCharts(data){
       {label:"大溪", data:allKeys.map(k=>mapD.get(k) ?? null), borderColor:FACTORIES.daxi.color, backgroundColor:FACTORIES.daxi.color, tension:.25, spanGaps:true}
     ]},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false},
-      plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabel(metric)}：${tip(c.parsed.y)}`}}},
+      plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabelForChart(metric)}：${tip(c.parsed.y)}`}}},
       scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}
     }
   });
 
   // 區間 KPI 比較：拿掉營業額；金額使用左側 Y 軸，百分比使用右側 Y 軸
-  const barLabels = ["報廢額", "超用額", "報廢率", "超用率"];
+  const barLabels = ["報廢額", "超用B(多產-廢棄)", "報廢率", "超用率"];
   const barMetricByIndex = ["scrapAmt", "overuseAmt", "scrapRate", "overuseRate"];
   destroyChart("bar");
   state.charts.bar = new Chart($("barChart").getContext("2d"), {
@@ -2481,15 +2528,23 @@ function renderCards(data){
   syncOveruseMetricControls(data);
   const metrics = displayMetricKeys(data);
   const slots = data.slots || [];
+  const cardWrap = $("kpiCards");
+  if (cardWrap) {
+    cardWrap.className = slots.length >= 3
+      ? "mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"
+      : "mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3";
+  }
+
   $("kpiCards").innerHTML = metrics.map(k => {
-    const gridStyle = `grid-template-columns:repeat(${Math.max(1, slots.length)},minmax(0,1fr))`;
-    const values = slots.map(s => `<div><div class="kpi-sub">${FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono" style="color:${FACTORIES[s.key].color}">${fmtMetricCard(k, s.agg[k])}</div></div>`).join("");
+    const innerCols = slots.length >= 3 ? 2 : Math.max(1, slots.length);
+    const gridStyle = `grid-template-columns:repeat(${innerCols},minmax(0,1fr))`;
+    const values = slots.map(s => `<div class="min-w-0"><div class="kpi-sub truncate">${FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono leading-tight break-words" style="color:${FACTORIES[s.key].color}">${fmtMetricCard(k, s.agg[k])}</div></div>`).join("");
     let diffHtml = "";
     if (slots.length === 2){
       const diff = (slots[1].agg[k] ?? 0) - (slots[0].agg[k] ?? 0);
       diffHtml = `<div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${fmtMetricCard(k, diff)}</span></div>`;
     }
-    return `<div class="card p-4"><div class="kpi-title">${metricLabel(k)}</div><div class="mt-3 grid gap-3" style="${gridStyle}">${values}</div>${diffHtml}</div>`;
+    return `<div class="card p-4"><div class="kpi-title">${metricLabel(k)}</div><div class="mt-3 grid gap-x-4 gap-y-3" style="${gridStyle}">${values}</div>${diffHtml}</div>`;
   }).join("");
 }
 
@@ -2549,7 +2604,7 @@ function renderCharts(data){
   destroyChart("trend");
   state.charts.trend = new Chart($("trendChart").getContext("2d"), {
     type:"line", data:{labels, datasets},
-    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabel(metric)}：${tip(c.parsed.y)}`}}}, scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}}
+    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabelForChart(metric)}：${tip(c.parsed.y)}`}}}, scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}}
   });
 
   const postMay = isPostMayOveruseLayout(data);
@@ -2804,6 +2859,123 @@ function fmtDailyPct(v){
   const n = numOrNull(v);
   return n == null ? "—" : fmtPct(n);
 }
+function fmtDailyDate(iso){
+  const s = safeStr(iso);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s.slice(5) : (s || "—");
+}
+
+function dailyAggAddNumber(target, key, value){
+  const n = Number(value);
+  if (Number.isFinite(n)) target[key] = (Number(target[key]) || 0) + n;
+}
+
+function dailyAggAddRate(target, rateKey, value, weight){
+  const v = Number(value);
+  const w = Number(weight);
+  if (!Number.isFinite(v)) return;
+  const ww = Number.isFinite(w) && w > 0 ? w : 1;
+  target[rateKey + "Numer"] = (Number(target[rateKey + "Numer"]) || 0) + v * ww;
+  target[rateKey + "Denom"] = (Number(target[rateKey + "Denom"]) || 0) + ww;
+}
+
+function finalizeDailyAggRate(target, rateKey, fallbackNumKey, fallbackDenKey){
+  const numer = Number(target[rateKey + "Numer"]) || 0;
+  const denom = Number(target[rateKey + "Denom"]) || 0;
+  if (denom > 0) {
+    target[rateKey] = numer / denom;
+    return;
+  }
+  const num = Number(target[fallbackNumKey]);
+  const den = Number(target[fallbackDenKey]);
+  target[rateKey] = Number.isFinite(num) && Number.isFinite(den) && den > 0 ? num / den : null;
+}
+
+function aggregateDailyDetailRows(rows){
+  const map = new Map();
+  for (const r of rows || []){
+    const semiKey = normalizeDailySearch(r.semi || "");
+    const productKeyForBlankSemi = semiKey ? "" : normalizeDailySearch(r.product || "");
+    const key = [
+      r.rangeLabel || "目前區間",
+      r.rangeStart || "",
+      r.rangeEnd || "",
+      r.factoryKey || "",
+      r.date || "",
+      semiKey || productKeyForBlankSemi
+    ].join("||");
+
+    if (!map.has(key)) {
+      map.set(key, {
+        date: r.date,
+        product: r.product || "",
+        semi: r.semi || "",
+        factoryKey: r.factoryKey,
+        rangeLabel: r.rangeLabel,
+        rangeStart: r.rangeStart,
+        rangeEnd: r.rangeEnd,
+        order: 0, output: 0, outQty: 0,
+        priceSum: 0, priceN: 0, price: null, unitPrice: null,
+        scrapQty: 0, scrapAmt: 0,
+        overuseQty: 0, overuseAmt: 0,
+        expandQty: 0, actualQty: 0, refillQtyNew: 0, refillQty: 0, refill: 0,
+        productSet: new Set(),
+        _detailFormat: r._detailFormat || "old"
+      });
+    }
+
+    const o = map.get(key);
+    if (r.product) o.productSet.add(r.product);
+    if (!o.product && r.product) o.product = r.product;
+    if (!o.semi && r.semi) o.semi = r.semi;
+    if (r._detailFormat === "new") o._detailFormat = "new";
+
+    dailyAggAddNumber(o, "order", r.order);
+    const outputQty = r.output ?? r.outQty;
+    dailyAggAddNumber(o, "output", outputQty);
+    dailyAggAddNumber(o, "outQty", outputQty);
+    dailyAggAddNumber(o, "scrapQty", r.scrapQty);
+    dailyAggAddNumber(o, "scrapAmt", r.scrapAmt);
+    dailyAggAddNumber(o, "overuseQty", r.overuseQty);
+    dailyAggAddNumber(o, "overuseAmt", r.overuseAmt);
+    dailyAggAddNumber(o, "expandQty", r.expandQty);
+    dailyAggAddNumber(o, "actualQty", r.actualQty);
+    const refillQty = r.refillQtyNew ?? r.refillQty ?? r.refill;
+    dailyAggAddNumber(o, "refillQtyNew", refillQty);
+    dailyAggAddNumber(o, "refillQty", refillQty);
+    dailyAggAddNumber(o, "refill", refillQty);
+
+    const price = Number(r.price ?? r.unitPrice);
+    if (Number.isFinite(price) && price > 0) {
+      o.priceSum += price;
+      o.priceN += 1;
+    }
+
+    const weight = Number(r.order);
+    dailyAggAddRate(o, "prodRate", r.prodRate, weight);
+    dailyAggAddRate(o, "scrapRate", r.scrapRate, weight);
+    dailyAggAddRate(o, "overuseRate", r.overuseRate, weight);
+    dailyAggAddRate(o, "expandRate", r.expandRate, weight);
+    dailyAggAddRate(o, "actualRate", r.actualRate, weight);
+    dailyAggAddRate(o, "refillRateNew", r.refillRateNew ?? r.refillRate, weight);
+  }
+
+  const out = Array.from(map.values());
+  for (const o of out){
+    o.price = o.unitPrice = o.priceN > 0 ? o.priceSum / o.priceN : null;
+    if (o.productSet && o.productSet.size > 1) {
+      const names = Array.from(o.productSet);
+      o.product = `${names[0]} 等${names.length}項`;
+    }
+    delete o.productSet;
+    finalizeDailyAggRate(o, "prodRate", "output", "order");
+    finalizeDailyAggRate(o, "scrapRate", "scrapQty", "order");
+    finalizeDailyAggRate(o, "overuseRate", "overuseQty", "order");
+    finalizeDailyAggRate(o, "expandRate", "expandQty", "order");
+    finalizeDailyAggRate(o, "actualRate", "actualQty", "order");
+    finalizeDailyAggRate(o, "refillRateNew", "refillQtyNew", "order");
+  }
+  return out;
+}
 
 function getDailyDetailState(){
   state.dailyDetail = state.dailyDetail || {};
@@ -2842,7 +3014,7 @@ function getDailyDetailColumns(){
   const expand = !!dailyState.expandView;
   const rate = !!dailyState.rateView;
   const base = [
-    { label: "日期", cell: r => escapeHTML(r.date || "—"), cls: "mono" },
+    { label: "日期", cell: r => escapeHTML(fmtDailyDate(r.date)), cls: "mono" },
     { label: "商品名", cell: r => escapeHTML(r.product || "—") },
     { label: "半成品名", cell: r => `<span class="muted">${escapeHTML(r.semi || "—")}</span>` },
     { label: "單價", cell: r => fmtDailyUnit(r.price ?? r.unitPrice), cls: "text-right mono" },
@@ -2852,8 +3024,8 @@ function getDailyDetailColumns(){
     const usePostMay = isPostMayOveruseLayout();
     const overCols = usePostMay
       ? [
-          { label: "多產額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
-          { label: "超用額", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
+          { label: "超用A(多產)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+          { label: "超用B(多產-廢棄)", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
         ]
       : [
           { label: "超用金額(多產-廢棄)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" }
@@ -2880,8 +3052,8 @@ function getDailyDetailColumns(){
     const usePostMay = isPostMayOveruseLayout();
     const overCols = usePostMay
       ? [
-          { label: "多產額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
-          { label: "超用額", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
+          { label: "超用A(多產)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+          { label: "超用B(多產-廢棄)", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
         ]
       : [
           { label: "超用金額(多產-廢棄)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" }
@@ -2994,8 +3166,9 @@ function buildDailyDetailRows(data){
       }
     }
   }
-  out.sort((a,b)=> safeStr(a.date).localeCompare(safeStr(b.date)) || safeStr(FACTORIES[a.factoryKey]?.name).localeCompare(safeStr(FACTORIES[b.factoryKey]?.name)) || safeStr(a.product).localeCompare(safeStr(b.product)) || safeStr(a.semi).localeCompare(safeStr(b.semi)));
-  return out;
+  const aggregated = aggregateDailyDetailRows(out);
+  aggregated.sort((a,b)=> safeStr(a.date).localeCompare(safeStr(b.date)) || safeStr(FACTORIES[a.factoryKey]?.name).localeCompare(safeStr(FACTORIES[b.factoryKey]?.name)) || safeStr(a.product).localeCompare(safeStr(b.product)) || safeStr(a.semi).localeCompare(safeStr(b.semi)));
+  return aggregated;
 }
 
 function renderDailySemiSuggestions(data){
