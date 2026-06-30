@@ -154,7 +154,7 @@
       <div class="flex flex-wrap gap-2 items-center">
         <button class="seg-btn" onclick="goSite('xinfeng')">新豐半成品</button>
         <button class="seg-btn" onclick="goSite('jinxin')">晉欣半成品</button>
-        <button class="seg-btn" onclick="goSite('daxi')">屏榮大溪半成品</button>
+        <button class="seg-btn" onclick="goSite('daxi')">大溪半成品</button>
         <button class="seg-btn" onclick="goSite('changjia')">長家半成品</button>
         <button id="reloadBtn" class="seg-btn active">重新讀取資料</button>
       </div>
@@ -202,9 +202,9 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div class="text-sm font-bold">選擇對比工廠及指標</div>
-            <div class="text-xs muted mt-1">最多選擇 2 個廠別進行同圖與區間比較</div>
+            <div class="text-xs muted mt-1">最多選擇 4 個廠別進行同圖與區間比較</div>
           </div>
-          <div id="factorySelectHint" class="chip">已選擇 0 / 2</div>
+          <div id="factorySelectHint" class="chip">已選擇 0 / 4</div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
@@ -218,8 +218,8 @@
               <option value="sales">營業額</option>
               <option value="scrapAmt">報廢額</option>
               <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用金額A(多產)</option>
-              <option value="overuseAmtB" data-post-may-only="1">超用金額B(多產-廢棄)</option>
+              <option value="overuseAmt">多產額</option>
+              <option value="overuseAmtB" data-post-may-only="1">超用額</option>
               <option value="overuseRate">超用率</option>
             </select>
           </div>
@@ -233,8 +233,8 @@
       <div class="card p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div class="text-sm font-bold">雙廠 KPI 趨勢圖</div>
-            <div class="text-xs muted mt-1">同一指標，兩廠同圖比較</div>
+            <div class="text-sm font-bold">多廠 KPI 趨勢圖</div>
+            <div class="text-xs muted mt-1">同一指標，多廠同圖比較</div>
           </div>
           <div class="flex gap-3 text-xs muted" id="trendLegend"></div>
         </div>
@@ -246,7 +246,7 @@
       <div class="card p-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div class="text-sm font-bold">區間 KPI 差異比較</div>
+            <div class="text-sm font-bold">區間 KPI 比較</div>
             <div class="text-xs muted mt-1">以目前範圍加總後重算比率</div>
           </div>
         </div>
@@ -269,7 +269,7 @@
             <tr>
               <th>指標</th>
               <th class="text-right">晉欣</th>
-              <th class="text-right">屏榮大溪</th>
+              <th class="text-right">大溪</th>
               <th class="text-right">差異</th>
               <th class="text-right">差異率</th>
               <th>判讀</th>
@@ -280,67 +280,8 @@
       </div>
     </section>
 
-    <section class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
-      <div class="card p-4">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div>
-            <div class="text-sm font-bold" id="slotATopTitle">廠別 A｜報廢 / 超用 Top 10</div>
-            <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <select id="slotATopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
-              <option value="all">全部</option>
-              <option value="shared">共用類</option>
-              <option value="nonShared">非共用類</option>
-            </select>
-            <select id="slotATopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
-              <option value="scrapAmt">報廢金額</option>
-              <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用金額A(多產)</option>
-              <option value="overuseAmtB" data-post-may-only="1">超用金額B(多產-廢棄)</option>
-              <option value="overuseRate">超用率</option>
-            </select>
-            <button id="commonTopBtnA" type="button" class="seg-btn" title="讓右側表格依照左側目前半成品排序顯示">對方廠共有</button>
-          </div>
-        </div>
-        <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
-          <table>
-            <thead><tr><th>#</th><th>商品名</th><th>半成品名</th><th class="text-right">金額</th></tr></thead>
-            <tbody id="slotATopTbody"></tbody>
-          </table>
-        </div>
-      </div>
+    <section class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3" id="topTablesGrid"></section>
 
-      <div class="card p-4">
-        <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div>
-            <div class="text-sm font-bold" id="slotBTopTitle">廠別 B｜報廢 / 超用 Top 10</div>
-            <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
-          </div>
-          <div class="flex flex-wrap gap-2">
-            <select id="slotBTopClass" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
-              <option value="all">全部</option>
-              <option value="shared">共用類</option>
-              <option value="nonShared">非共用類</option>
-            </select>
-            <select id="slotBTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
-              <option value="scrapAmt">報廢金額</option>
-              <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用金額A(多產)</option>
-              <option value="overuseAmtB" data-post-may-only="1">超用金額B(多產-廢棄)</option>
-              <option value="overuseRate">超用率</option>
-            </select>
-            <button id="commonTopBtnB" type="button" class="seg-btn" title="讓左側表格依照右側目前半成品排序顯示">對方廠共有</button>
-          </div>
-        </div>
-        <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
-          <table>
-            <thead><tr><th>#</th><th>商品名</th><th>半成品名</th><th class="text-right">金額</th></tr></thead>
-            <tbody id="slotBTopTbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </section>
 
     <section class="mt-4 card p-4" id="dailyDetailCard">
       <div class="flex flex-col gap-4">
@@ -387,7 +328,7 @@
     </section>
 
     <p class="muted text-xs mt-4 leading-relaxed">
-      資料讀取來源：新豐、屏榮大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
+      資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
   </div>
 
@@ -406,7 +347,7 @@ const FACTORIES = {
     wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
   },
   daxi: {
-    name: "屏榮大溪",
+    name: "大溪",
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
@@ -535,7 +476,14 @@ function fmtMoney(n){
 function fmtSalesWan(n){
   const v = Number(n);
   if (!Number.isFinite(v)) return "—";
+  if (Math.abs(v) >= 100000000) return (v / 100000000).toFixed(1) + "億";
   return Math.round(v / 10000).toLocaleString("zh-TW") + "萬";
+}
+function fmtCardMoneyWan(n){
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  if (Math.abs(v) >= 10000) return "NT$ " + (v / 10000).toFixed(1) + "萬";
+  return fmtMoney(v);
 }
 function fmtInt(n){
   const v = Number(n);
@@ -550,6 +498,12 @@ function fmtMetric(k, v){
   if (["scrapRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
   return fmtMoney(v);
 }
+function fmtMetricCard(k, v){
+  if (k === "sales") return fmtSalesWan(v);
+  if (["scrapRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
+  if (["scrapAmt","overuseAmt","overuseAmtB"].includes(k)) return fmtCardMoneyWan(v);
+  return fmtMoney(v);
+}
 function isPostMayOveruseLayout(data=null){
   const start = safeStr(data?.start || data?.chartStart || "");
   if (start) return start >= "2026-05-01";
@@ -560,8 +514,8 @@ function isPostMayOveruseLayout(data=null){
 }
 function overuseAmtAValue(row){ return Number(row?.overuseAmt) || 0; }
 function overuseAmtBValue(row){ return overuseAmtAValue(row) - (Number(row?.scrapAmt) || 0); }
-function overuseAmtALabel(){ return state._postMayOveruseLayout ? "超用金額A(多產)" : "超用金額(多產-廢棄)"; }
-function overuseAmtBLabel(){ return "超用金額B(多產-廢棄)"; }
+function overuseAmtALabel(){ return state._postMayOveruseLayout ? "多產額" : "超用金額(多產-廢棄)"; }
+function overuseAmtBLabel(){ return "超用額"; }
 function metricLabel(k){
   if (k === "overuseAmt") return overuseAmtALabel();
   if (k === "overuseAmtB") return overuseAmtBLabel();
@@ -1103,7 +1057,7 @@ function isLikelyFactoryWorkbook(key, path){
   // 保留較彈性的保護：檔名必須同時含「半成品」與廠別關鍵字，不接受單純「生產管理報表」。
   const factoryNamePattern = {
     xinfeng: /(新豐|屏榮新豐|XiFang|Xifang)/i,
-    daxi: /(大溪|Daxi|屏榮大溪)/i,
+    daxi: /(大溪|Daxi|大溪)/i,
     changjia: /(長家|ChangJia)/i,
     jinxin: /(晉欣|jinxin|鮮食廠)/i
   }[key];
@@ -1625,7 +1579,7 @@ function aggregateSeries(rows, metric, gran){
 
 async function renderAll(){
   if (!selectedFactoryKeys().length) {
-    renderEmptyState("請先選擇 1～2 個工廠，系統會在選擇後才讀取該工廠資料。");
+    renderEmptyState("請先選擇 1～4 個工廠，系統會在選擇後才讀取該工廠資料。");
     return;
   }
   await ensureDataForCurrentRange();
@@ -1651,13 +1605,14 @@ function renderEmptyState(message){
   const legend = $("trendLegend");
   if (legend) legend.innerHTML = "";
   ["slotATopTbody","slotBTopTbody"].forEach(id => { const el=$(id); if (el) el.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`; });
+  const topGrid = $("topTablesGrid"); if (topGrid) topGrid.innerHTML = `<div class="card p-4 muted">${msg}</div>`;
   const dailyCols = renderDailyDetailHeader();
   const dailyBody = $("dailyDetailTbody"); if (dailyBody) dailyBody.innerHTML = `<tr><td colspan="${(dailyCols.length || 1)}" class="muted">${msg}</td></tr>`;
   const dailyCount = $("dailyDetailCount"); if (dailyCount) dailyCount.textContent = "0 筆";
   const dailyRange = $("dailyDetailRangeLabel"); if (dailyRange) dailyRange.textContent = msg;
   const tA = $("slotATopTitle"); if (tA) tA.textContent = "廠別 A｜報廢 / 超用 Top 10";
   const tB = $("slotBTopTitle"); if (tB) tB.textContent = "廠別 B｜報廢 / 超用 Top 10";
-  setDataStatus("尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料");
+  setDataStatus("尚未選擇工廠；請先選擇 1～4 個工廠後再載入資料");
 }
 
 function renderCards(data){
@@ -1667,18 +1622,18 @@ function renderCards(data){
     const j = data.jinxin.agg[k], d = data.daxi.agg[k];
     const diff = (d ?? 0) - (j ?? 0);
     const isRate = k.includes("Rate");
-    const diffText = isRate ? fmtPct(diff) : fmtMoney(diff);
+    const diffText = fmtMetricCard(k, diff);
     return `
       <div class="card p-4">
         <div class="kpi-title">${metricLabel(k)}</div>
         <div class="mt-3 grid grid-cols-2 gap-3">
           <div>
             <div class="kpi-sub">晉欣</div>
-            <div class="text-lg font-extrabold mono" style="color:var(--jinxin)">${fmtMetric(k,j)}</div>
+            <div class="text-lg font-extrabold mono" style="color:var(--jinxin)">${fmtMetricCard(k,j)}</div>
           </div>
           <div>
-            <div class="kpi-sub">屏榮大溪</div>
-            <div class="text-lg font-extrabold mono" style="color:var(--daxi)">${fmtMetric(k,d)}</div>
+            <div class="kpi-sub">大溪</div>
+            <div class="text-lg font-extrabold mono" style="color:var(--daxi)">${fmtMetricCard(k,d)}</div>
           </div>
         </div>
         <div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${diffText}</span></div>
@@ -1701,8 +1656,8 @@ function renderTable(data){
     }
     return `<tr>
       <td>${metricLabel(k)}</td>
-      <td class="text-right mono">${fmtMetric(k,j)}</td>
-      <td class="text-right mono">${fmtMetric(k,d)}</td>
+      <td class="text-right mono">${fmtMetricCard(k,j)}</td>
+      <td class="text-right mono">${fmtMetricCard(k,d)}</td>
       <td class="text-right mono">${fmtMetric(k,diff)}</td>
       <td class="text-right mono">${fmtPct(diffRate)}</td>
       <td>${judge}</td>
@@ -1731,7 +1686,7 @@ function renderCharts(data){
     type:"line",
     data:{labels, datasets:[
       {label:"晉欣", data:allKeys.map(k=>mapJ.get(k) ?? null), borderColor:FACTORIES.jinxin.color, backgroundColor:FACTORIES.jinxin.color, tension:.25, spanGaps:true},
-      {label:"屏榮大溪", data:allKeys.map(k=>mapD.get(k) ?? null), borderColor:FACTORIES.daxi.color, backgroundColor:FACTORIES.daxi.color, tension:.25, spanGaps:true}
+      {label:"大溪", data:allKeys.map(k=>mapD.get(k) ?? null), borderColor:FACTORIES.daxi.color, backgroundColor:FACTORIES.daxi.color, tension:.25, spanGaps:true}
     ]},
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false},
       plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabel(metric)}：${tip(c.parsed.y)}`}}},
@@ -1739,7 +1694,7 @@ function renderCharts(data){
     }
   });
 
-  // 區間 KPI 差異比較：拿掉營業額；金額使用左側 Y 軸，百分比使用右側 Y 軸
+  // 區間 KPI 比較：拿掉營業額；金額使用左側 Y 軸，百分比使用右側 Y 軸
   const barLabels = ["報廢額", "超用額", "報廢率", "超用率"];
   const barMetricByIndex = ["scrapAmt", "overuseAmt", "scrapRate", "overuseRate"];
   destroyChart("bar");
@@ -1755,7 +1710,7 @@ function renderCharts(data){
           yAxisID:"y"
         },
         {
-          label:"屏榮大溪｜金額",
+          label:"大溪｜金額",
           data:[data.daxi.agg.scrapAmt, data.daxi.agg.overuseAmt, null, null],
           backgroundColor:FACTORIES.daxi.color,
           yAxisID:"y"
@@ -1768,7 +1723,7 @@ function renderCharts(data){
           yAxisID:"y1"
         },
         {
-          label:"屏榮大溪｜比率",
+          label:"大溪｜比率",
           data:[null, null, data.daxi.agg.scrapRate, data.daxi.agg.overuseRate],
           backgroundColor:"rgba(107,142,35,0.35)",
           borderColor:FACTORIES.daxi.color,
@@ -2095,10 +2050,11 @@ const FACTORY_ORDER = ["xinfeng", "daxi", "changjia", "jinxin"];
 state.selectedFactoryKeys = state.selectedFactoryKeys || [];
 state.mirrorTopSource = null;
 state.dailyDetail = state.dailyDetail || { factory: "all", query: "", prevExpanded: false, expandView: false, rateView: false };
+state.topTableSettings = state.topTableSettings || {};
 
 function allFactoryKeys(){ return FACTORY_ORDER.filter(k => FACTORIES[k]); }
 function selectedFactoryKeys(){
-  return (state.selectedFactoryKeys || []).filter(k => FACTORIES[k]).slice(0, 2);
+  return (state.selectedFactoryKeys || []).filter(k => FACTORIES[k]).slice(0, 4);
 }
 function slotKey(slot){ return selectedFactoryKeys()[slot] || null; }
 function emptyFactoryState(){ return { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() }; }
@@ -2123,7 +2079,7 @@ function renderFactorySelector(){
   wrap.querySelectorAll("[data-factory-select]").forEach(btn => {
     btn.addEventListener("click", () => toggleFactorySelection(btn.dataset.factorySelect));
   });
-  if (hint) hint.textContent = `已選擇 ${selected.length} / 2`;
+  if (hint) hint.textContent = `已選擇 ${selected.length} / 4`;
 }
 
 function captureTimeSelection(){
@@ -2184,7 +2140,7 @@ async function toggleFactorySelection(key){
   if (selected.includes(key)) {
     state.selectedFactoryKeys = selected.filter(k => k !== key);
   } else {
-    if (selected.length >= 2) { toast("最多只能選擇 2 個工廠做對比，請先取消其中一個工廠。"); return; }
+    if (selected.length >= 4) { toast("最多只能選擇 4 個工廠做對比，請先取消其中一個工廠。"); return; }
     state.selectedFactoryKeys = [...selected, key];
     await ensureFactoryIndex(key);
   }
@@ -2285,7 +2241,7 @@ async function loadAll(){
   if (keepSelected.length) {
     await renderAll();
   } else {
-    renderEmptyState("已預載四廠近三個月資料；請選擇 1～2 個工廠進行對比。其他月份會在背景持續載入，後續切換月份時可直接使用。");
+    renderEmptyState("已預載四廠近三個月資料；請選擇 1～4 個工廠進行對比。其他月份會在背景持續載入，後續切換月份時可直接使用。");
   }
 
   // 近三個月先完成並顯示後，再非阻塞背景讀取其餘月份。
@@ -2395,7 +2351,7 @@ function buildSelectors(keep=null){
 async function ensureDataForCurrentRange(){
   const selected = selectedFactoryKeys();
   if (!selected.length) {
-    setDataStatus("尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料");
+    setDataStatus("尚未選擇工廠；請先選擇 1～4 個工廠後再載入資料");
     return;
   }
   for (const key of selected) await ensureFactoryIndex(key);
@@ -2524,32 +2480,38 @@ function currentData(){
 function renderCards(data){
   syncOveruseMetricControls(data);
   const metrics = displayMetricKeys(data);
-  const slots = data.slots;
+  const slots = data.slots || [];
   $("kpiCards").innerHTML = metrics.map(k => {
-    const values = slots.map(s => `<div><div class="kpi-sub">${FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono" style="color:${FACTORIES[s.key].color}">${fmtMetric(k, s.agg[k])}</div></div>`).join("");
+    const gridStyle = `grid-template-columns:repeat(${Math.max(1, slots.length)},minmax(0,1fr))`;
+    const values = slots.map(s => `<div><div class="kpi-sub">${FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono" style="color:${FACTORIES[s.key].color}">${fmtMetricCard(k, s.agg[k])}</div></div>`).join("");
     let diffHtml = "";
     if (slots.length === 2){
       const diff = (slots[1].agg[k] ?? 0) - (slots[0].agg[k] ?? 0);
-      diffHtml = `<div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${k.includes("Rate") || k.includes("Share") ? fmtPct(diff) : fmtMoney(diff)}</span></div>`;
+      diffHtml = `<div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${fmtMetricCard(k, diff)}</span></div>`;
     }
-    return `<div class="card p-4"><div class="kpi-title">${metricLabel(k)}</div><div class="mt-3 grid grid-cols-${Math.max(1, slots.length)} gap-3">${values}</div>${diffHtml}</div>`;
+    return `<div class="card p-4"><div class="kpi-title">${metricLabel(k)}</div><div class="mt-3 grid gap-3" style="${gridStyle}">${values}</div>${diffHtml}</div>`;
   }).join("");
 }
 
 function renderTable(data){
   syncOveruseMetricControls(data);
   const metrics = displayMetricKeys(data);
-  const slots = data.slots;
+  const slots = data.slots || [];
   const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
+  const showDiff = slots.length === 2;
   if (header) {
-    header.innerHTML = `<th>指標</th>${slots.map(s=>`<th class="text-right">${FACTORIES[s.key].name}</th>`).join("")}${slots.length===2?`<th class="text-right">差異</th><th class="text-right">差異率</th><th>判讀</th>`:""}`;
+    header.innerHTML = `<th>指標</th>${slots.map(s=>`<th class="text-right">${FACTORIES[s.key].name}</th>`).join("")}${showDiff ? `<th class="text-right">差異</th><th class="text-right">差異率</th><th>判讀</th>` : ""}`;
   }
   const sub = $("compareSub");
-  if (sub) sub.textContent = slots.length === 2 ? `差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}` : "單廠檢視，請再選擇 1 個工廠進行差異比較";
+  if (sub) {
+    if (showDiff) sub.textContent = `差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}`;
+    else if (slots.length > 2) sub.textContent = "三廠以上檢視：僅顯示各廠數值，不顯示差異、差異率與判讀";
+    else sub.textContent = "單廠檢視，請再選擇工廠進行差異比較";
+  }
 
   $("compareTbody").innerHTML = metrics.map(k => {
     const valueCells = slots.map(s => `<td class="text-right mono">${fmtMetric(k, s.agg[k])}</td>`).join("");
-    if (slots.length < 2) return `<tr><td>${metricLabel(k)}</td>${valueCells}</tr>`;
+    if (!showDiff) return `<tr><td>${metricLabel(k)}</td>${valueCells}</tr>`;
     const a = slots[0].agg[k], b = slots[1].agg[k];
     const diff = (b ?? 0) - (a ?? 0);
     const diffRate = (a && Number.isFinite(a) && a !== 0) ? diff / a : null;
@@ -2624,55 +2586,78 @@ function syncCommonTopButtons(){
   if (bBtn) bBtn.classList.toggle("active", state.mirrorTopSource === "B");
 }
 
+function getTopTableSetting(factoryKey, postMay=false){
+  state.topTableSettings = state.topTableSettings || {};
+  if (!state.topTableSettings[factoryKey]) {
+    state.topTableSettings[factoryKey] = { metric:"scrapAmt", classFilter:"all" };
+  }
+  const s = state.topTableSettings[factoryKey];
+  if (!postMay && s.metric === "overuseAmtB") s.metric = "overuseAmt";
+  if (!s.metric) s.metric = "scrapAmt";
+  if (!s.classFilter) s.classFilter = "all";
+  return s;
+}
+
+function topMetricOptionsHTML(selectedMetric, postMay=false){
+  const opts = [
+    ["scrapAmt", "報廢金額"],
+    ["scrapRate", "報廢率"],
+    ["overuseAmt", metricLabel("overuseAmt")],
+    ...(postMay ? [["overuseAmtB", metricLabel("overuseAmtB")]] : []),
+    ["overuseRate", "超用率"]
+  ];
+  return opts.map(([value, label]) => `<option value="${value}" ${value === selectedMetric ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function topClassOptionsHTML(selectedClass){
+  const opts = [["all","全部"],["shared","共用類"],["nonShared","非共用類"]];
+  return opts.map(([value, label]) => `<option value="${value}" ${value === selectedClass ? "selected" : ""}>${label}</option>`).join("");
+}
+
 function renderTopTables(data){
   syncOveruseMetricControls(data);
-  const slots = data.slots;
-  syncCommonTopButtons();
-  const slotCfg = [
-    {slot:"A", key:slots[0]?.key, tbody:"slotATopTbody", title:"slotATopTitle", metricSel:"slotATopType", classSel:"slotATopClass", commonBtn:"commonTopBtnA"},
-    {slot:"B", key:slots[1]?.key, tbody:"slotBTopTbody", title:"slotBTopTitle", metricSel:"slotBTopType", classSel:"slotBTopClass", commonBtn:"commonTopBtnB"}
-  ];
-  for (const cfg of slotCfg){
-    const wrapTitle = $(cfg.title);
-    const tbody = $(cfg.tbody);
-    const btn = $(cfg.commonBtn);
-    if (!tbody) continue;
-    if (!cfg.key){
-      if (wrapTitle) wrapTitle.textContent = "請選擇第二個廠別｜報廢 / 超用 Top 10";
-      tbody.innerHTML = `<tr><td colspan="4" class="muted">請再選擇 1 個工廠進行對比。</td></tr>`;
-      if (btn) btn.style.display = "none";
-      continue;
+  const slots = data.slots || [];
+  const grid = $("topTablesGrid");
+  if (!grid) return;
+
+  if (!slots.length) {
+    grid.innerHTML = `<div class="card p-4 muted">請先選擇工廠後查看報廢 / 超用 Top 10。</div>`;
+    return;
+  }
+
+  const postMay = isPostMayOveruseLayout(data);
+  if (slots.length !== 2 && state.mirrorTopSource) state.mirrorTopSource = null;
+
+  const config = slots.map((slot, idx) => {
+    const setting = getTopTableSetting(slot.key, postMay);
+    return { idx, key: slot.key, slot, metric: setting.metric, classFilter: setting.classFilter, details: slot.detailRows || [] };
+  });
+
+  let sourceCfg = null;
+  let sourceRows = null;
+  let sourceOrder = null;
+  if (slots.length === 2 && state.mirrorTopSource) {
+    sourceCfg = config.find(c => c.key === state.mirrorTopSource) || null;
+    if (sourceCfg) {
+      sourceRows = aggregateTopByProductSemi(sourceCfg.details, sourceCfg.metric, sourceCfg.classFilter);
+      sourceOrder = getSemiOrderFromRows(sourceRows);
     }
-    if (wrapTitle) wrapTitle.textContent = `${FACTORIES[cfg.key].name}｜報廢 / 超用 Top 10`;
-    if (btn) { btn.style.display = ""; btn.textContent = cfg.slot === "A" && slots[1] ? `${FACTORIES[slots[1].key].name}共有` : (cfg.slot === "B" && slots[0] ? `${FACTORIES[slots[0].key].name}共有` : "對方廠共有"); }
   }
 
-  const config = slotCfg.filter(c=>c.key).map((cfg, idx) => ({
-    ...cfg,
-    metric: $(cfg.metricSel).value,
-    classFilter: $(cfg.classSel) ? $(cfg.classSel).value : "all",
-    details: slots[idx].detailRows
-  }));
-
-  for (const cfg of config){
-    const tbody = $(cfg.tbody);
-    const valueTh = tbody?.closest("table")?.querySelector("thead th:last-child");
-    if (valueTh) valueTh.textContent = topMetricColumnLabel(cfg.metric);
-  }
-
-  let sourceRows = null, sourceOrder = null;
-  if (state.mirrorTopSource === "A" && config[0]) { sourceRows = aggregateTopByProductSemi(config[0].details, config[0].metric, config[0].classFilter); sourceOrder = getSemiOrderFromRows(sourceRows); }
-  if (state.mirrorTopSource === "B" && config[1]) { sourceRows = aggregateTopByProductSemi(config[1].details, config[1].metric, config[1].classFilter); sourceOrder = getSemiOrderFromRows(sourceRows); }
-
-  for (let i=0;i<config.length;i++){
-    const cfg = config[i];
+  grid.innerHTML = config.map(cfg => {
     let rows;
-    if (state.mirrorTopSource === "A" && config[0]) rows = i === 0 ? sourceRows : renderRowsBySemiOrder(cfg.details, cfg.metric, sourceOrder, cfg.classFilter);
-    else if (state.mirrorTopSource === "B" && config[1]) rows = i === 1 ? sourceRows : renderRowsBySemiOrder(cfg.details, cfg.metric, sourceOrder, cfg.classFilter);
-    else rows = aggregateTopByProductSemi(cfg.details, cfg.metric, cfg.classFilter);
+    if (sourceCfg && sourceOrder) {
+      rows = cfg.key === sourceCfg.key ? sourceRows : renderRowsBySemiOrder(cfg.details, cfg.metric, sourceOrder, cfg.classFilter);
+    } else {
+      rows = aggregateTopByProductSemi(cfg.details, cfg.metric, cfg.classFilter);
+    }
 
-    const emptyText = state.mirrorTopSource ? "目前範圍無可對照半成品明細資料" : cfg.classFilter === "shared" ? "目前範圍無共用類明細資料" : cfg.classFilter === "nonShared" ? "目前範圍無非共用類明細資料" : "目前範圍無明細資料";
-    $(cfg.tbody).innerHTML = rows.map((r,j)=>{
+    const emptyText = sourceCfg ? "目前範圍無可對照半成品明細資料" :
+                      cfg.classFilter === "shared" ? "目前範圍無共用類明細資料" :
+                      cfg.classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
+                      "目前範圍無明細資料";
+
+    const rowHtml = rows.map((r,j)=>{
       const canJump = r.exists !== false && safeStr(r.semi).trim();
       const semiCell = canJump
         ? `<button type="button" class="text-left hover:underline hover:text-slate-900" title="跳轉到${FACTORIES[cfg.key].name}的半成品日別明細" data-top-semi="${escapeHTML(r.semi)}" data-top-factory="${cfg.key}">${escapeHTML(r.semi)}</button>`
@@ -2684,7 +2669,32 @@ function renderTopTables(data){
         <td class="text-right mono">${r.exists === false ? "—" : formatTopValue(r[cfg.metric], cfg.metric)}</td>
       </tr>`;
     }).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
-  }
+
+    const otherSlot = slots.length === 2 ? slots.find(s => s.key !== cfg.key) : null;
+    const commonBtn = otherSlot
+      ? `<button type="button" class="seg-btn ${state.mirrorTopSource === cfg.key ? "active" : ""}" data-common-top-source="${cfg.key}" title="讓另一個工廠依照本表半成品排序顯示">${FACTORIES[otherSlot.key].name}共有</button>`
+      : "";
+
+    return `<div class="card p-4" data-top-card="${cfg.key}">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <div class="text-sm font-bold">${FACTORIES[cfg.key].name}｜報廢 / 超用 Top 10</div>
+          <div class="text-xs muted mt-1">依目前範圍半成品加總</div>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <select data-top-select="class" data-top-factory="${cfg.key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${topClassOptionsHTML(cfg.classFilter)}</select>
+          <select data-top-select="metric" data-top-factory="${cfg.key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${topMetricOptionsHTML(cfg.metric, postMay)}</select>
+          ${commonBtn}
+        </div>
+      </div>
+      <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
+        <table>
+          <thead><tr><th>#</th><th>商品名</th><th>半成品名</th><th class="text-right">${topMetricColumnLabel(cfg.metric)}</th></tr></thead>
+          <tbody>${rowHtml}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 function jumpToDailyDetailFromTop(factoryKey, semi){
@@ -2842,8 +2852,8 @@ function getDailyDetailColumns(){
     const usePostMay = isPostMayOveruseLayout();
     const overCols = usePostMay
       ? [
-          { label: "超用金額A(多產)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
-          { label: "超用金額B(多產-廢棄)", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
+          { label: "多產額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+          { label: "超用額", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
         ]
       : [
           { label: "超用金額(多產-廢棄)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" }
@@ -2870,8 +2880,8 @@ function getDailyDetailColumns(){
     const usePostMay = isPostMayOveruseLayout();
     const overCols = usePostMay
       ? [
-          { label: "超用金額A(多產)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
-          { label: "超用金額B(多產-廢棄)", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
+          { label: "多產額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+          { label: "超用額", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
         ]
       : [
           { label: "超用金額(多產-廢棄)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" }
@@ -3108,7 +3118,8 @@ function wireUI(){
   });
   $("yearSel").addEventListener("change", ()=>{ renderMonthOptions(); renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
   $("monthSel").addEventListener("change", ()=>{ renderWeekOptions(); renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
-  ["weekSel","rangeStart","rangeEnd","metricSel","slotATopType","slotBTopType","slotATopClass","slotBTopClass"].forEach(id => { const el=$(id); if (el) el.addEventListener("change", renderAll); });
+  ["weekSel","rangeStart","rangeEnd","metricSel"].forEach(id => { const el=$(id); if (el) el.addEventListener("change", renderAll); });
+
   const dailyFactory = $("dailyDetailFactory");
   if (dailyFactory) dailyFactory.addEventListener("change", () => { getDailyDetailState().factory = dailyFactory.value; renderDailyDetailCard(currentData()); });
   const dailySearch = $("dailySemiSearch");
@@ -3130,10 +3141,27 @@ function wireUI(){
     const inp = $("dailySemiSearch"); if (inp) inp.value = state.dailyDetail.query;
     renderDailyDetailCard(currentData());
   });
-  ["slotATopTbody","slotBTopTbody"].forEach(id => {
-    const tbody = $(id);
-    if (!tbody) return;
-    tbody.addEventListener("click", (ev) => {
+
+  const topGrid = $("topTablesGrid");
+  if (topGrid) {
+    topGrid.addEventListener("change", (ev) => {
+      const sel = ev.target.closest("[data-top-select]");
+      if (!sel) return;
+      const key = sel.dataset.topFactory;
+      if (!FACTORIES[key]) return;
+      const setting = getTopTableSetting(key, isPostMayOveruseLayout(currentData()));
+      if (sel.dataset.topSelect === "metric") setting.metric = sel.value;
+      if (sel.dataset.topSelect === "class") setting.classFilter = sel.value;
+      renderTopTables(currentData());
+    });
+    topGrid.addEventListener("click", (ev) => {
+      const common = ev.target.closest("[data-common-top-source]");
+      if (common) {
+        const key = common.dataset.commonTopSource;
+        state.mirrorTopSource = state.mirrorTopSource === key ? null : key;
+        renderTopTables(currentData());
+        return;
+      }
       const direct = ev.target.closest("[data-top-semi]");
       const row = ev.target.closest("[data-top-semi-row]");
       const target = direct || row;
@@ -3142,12 +3170,9 @@ function wireUI(){
       const factory = target.dataset.topFactory || target.dataset.topFactoryRow || "";
       jumpToDailyDetailFromTop(factory, semi);
     });
-  });
+  }
+
   $("reloadBtn").addEventListener("click", loadAll);
-  const aCommonBtn = $("commonTopBtnA");
-  if (aCommonBtn) aCommonBtn.addEventListener("click", () => { state.mirrorTopSource = state.mirrorTopSource === "A" ? null : "A"; renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
-  const bCommonBtn = $("commonTopBtnB");
-  if (bCommonBtn) bCommonBtn.addEventListener("click", () => { state.mirrorTopSource = state.mirrorTopSource === "B" ? null : "B"; renderAll().catch(e => { console.error(e); toast("資料載入或渲染失敗"); }); });
 }
 
 wireUI();
