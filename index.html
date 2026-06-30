@@ -1656,6 +1656,59 @@ function getDateRange(){
 }
 function filterByRange(rows,start,end){ return rows.filter(r => r.date >= start && r.date <= end); }
 
+function getPreviousDateRange(){
+  const {start, end} = getDateRange();
+  const ds = parseISO(start), de = parseISO(end);
+  if (!(ds instanceof Date) || isNaN(ds) || !(de instanceof Date) || isNaN(de)) return {start:null, end:null, label:"前期"};
+
+  if (state.mode === "year") {
+    const y = ds.getFullYear() - 1;
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: "前年" };
+  }
+
+  if (state.mode === "month") {
+    const prevFirst = new Date(ds.getFullYear(), ds.getMonth() - 1, 1);
+    const y = prevFirst.getFullYear();
+    const m = String(prevFirst.getMonth() + 1).padStart(2, "0");
+    return { start: `${y}-${m}-01`, end: toISO(new Date(y, prevFirst.getMonth() + 1, 0)), label: "前月" };
+  }
+
+  if (state.mode === "week") {
+    return { start: toISO(addDays(ds, -7)), end: toISO(addDays(de, -7)), label: "前週" };
+  }
+
+  const spanDays = Math.max(1, Math.round((de - ds) / 86400000) + 1);
+  const prevEnd = addDays(ds, -1);
+  const prevStart = addDays(prevEnd, -(spanDays - 1));
+  return { start: toISO(prevStart), end: toISO(prevEnd), label: state.mode === "day" ? "前日" : "前期" };
+}
+
+function calcChangeRatio(currentValue, previousValue){
+  const curr = Number(currentValue);
+  const prev = Number(previousValue);
+  if (!Number.isFinite(curr) || !Number.isFinite(prev) || prev === 0) return null;
+  return (curr - prev) / prev;
+}
+
+function fmtChangePct(delta){
+  if (!Number.isFinite(delta)) return "—";
+  const pct = delta * 100;
+  const abs = Math.abs(pct);
+  const fixed = abs >= 100 ? pct.toFixed(0) : (abs >= 10 ? pct.toFixed(1) : pct.toFixed(2));
+  const clean = fixed.replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
+  return `${pct >= 0 ? "+" : ""}${clean}%`;
+}
+
+function renderMetricWithPeriodCompare(metric, currentValue, previousValue, compareLabel){
+  const base = fmtMetric(metric, currentValue);
+  const delta = calcChangeRatio(currentValue, previousValue);
+  if (!Number.isFinite(delta)) {
+    return `<span>${base}</span> <span class="text-slate-400">(${compareLabel}:—)</span>`;
+  }
+  const colorClass = delta > 0 ? "text-red-600" : (delta < 0 ? "text-green-600" : "text-slate-500");
+  return `<span>${base}</span> <span class="${colorClass}">(${compareLabel}:${fmtChangePct(delta)})</span>`;
+}
+
 function summaryAgg(rows){
   let sales = 0;
   let scrapAmt = 0;
@@ -2621,15 +2674,34 @@ function startBackgroundLoadAllFactories(){
 
 function currentData(){
   const {start,end} = getDateRange();
+  const prevRange = getPreviousDateRange();
   const chartRange = getChartDateRange();
   const slots = selectedFactoryKeys().map(key => {
     const fstate = state.factories[key] || emptyFactoryState();
     const summaryRows = filterByRange(fstate.summary || [], start, end);
+    const prevSummaryRows = prevRange.start && prevRange.end ? filterByRange(fstate.summary || [], prevRange.start, prevRange.end) : [];
     const chartSummaryRows = filterByRange(fstate.summary || [], chartRange.start, chartRange.end);
     const detailRows = filterByRange(fstate.details || [], start, end);
-    return { key, summaryRows, chartSummaryRows, detailRows, agg: summaryAgg(summaryRows) };
+    return {
+      key,
+      summaryRows,
+      prevSummaryRows,
+      chartSummaryRows,
+      detailRows,
+      agg: summaryAgg(summaryRows),
+      prevAgg: summaryAgg(prevSummaryRows)
+    };
   });
-  return {start, end, chartStart: chartRange.start, chartEnd: chartRange.end, slots};
+  return {
+    start,
+    end,
+    prevStart: prevRange.start,
+    prevEnd: prevRange.end,
+    compareLabel: `比${prevRange.label}`,
+    chartStart: chartRange.start,
+    chartEnd: chartRange.end,
+    slots
+  };
 }
 
 function renderCards(data){
@@ -2660,6 +2732,7 @@ function renderTable(data){
   syncOveruseMetricControls(data);
   const metrics = displayMetricKeys(data);
   const slots = data.slots || [];
+  const compareLabel = data.compareLabel || "比前期";
   const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
   const showDiff = slots.length === 2;
   if (header) {
@@ -2667,13 +2740,13 @@ function renderTable(data){
   }
   const sub = $("compareSub");
   if (sub) {
-    if (showDiff) sub.textContent = `差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}`;
-    else if (slots.length > 2) sub.textContent = "三廠以上檢視：僅顯示各廠數值，不顯示差異、差異率與判讀";
-    else sub.textContent = "單廠檢視，請再選擇工廠進行差異比較";
+    if (showDiff) sub.textContent = `各廠數值皆附 ${compareLabel} 的增減百分比；差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}`;
+    else if (slots.length > 2) sub.textContent = `三廠以上檢視：各廠數值皆附 ${compareLabel} 的增減百分比；不顯示差異、差異率與判讀`;
+    else sub.textContent = `單廠檢視：數值附 ${compareLabel} 的增減百分比`;
   }
 
   $("compareTbody").innerHTML = metrics.map(k => {
-    const valueCells = slots.map(s => `<td class="text-right mono">${fmtMetric(k, s.agg[k])}</td>`).join("");
+    const valueCells = slots.map(s => `<td class="text-right mono">${renderMetricWithPeriodCompare(k, s.agg[k], s.prevAgg?.[k], compareLabel)}</td>`).join("");
     if (!showDiff) return `<tr><td>${metricLabel(k)}</td>${valueCells}</tr>`;
     const a = slots[0].agg[k], b = slots[1].agg[k];
     const diff = (b ?? 0) - (a ?? 0);
@@ -2884,12 +2957,18 @@ function jumpToDailyDetailFromTop(factoryKey, semi){
 
 
 function getPreviousDateRange(startISO, endISO){
+  if (!startISO || !endISO) {
+    const currentRange = getDateRange();
+    startISO = currentRange.start;
+    endISO = currentRange.end;
+  }
+
   const start = parseISO(startISO);
   const end = parseISO(endISO);
   if (!start || !end) return null;
 
   if (state.mode === "week") {
-    return { start: toISO(addDays(start, -7)), end: toISO(addDays(end, -7)), label: "前一週" };
+    return { start: toISO(addDays(start, -7)), end: toISO(addDays(end, -7)), label: "前週" };
   }
 
   if (state.mode === "month") {
@@ -2897,23 +2976,23 @@ function getPreviousDateRange(startISO, endISO){
     const m = start.getMonth();
     const ps = new Date(y, m - 1, 1);
     const pe = new Date(y, m, 0);
-    return { start: toISO(ps), end: toISO(pe), label: "前一月" };
+    return { start: toISO(ps), end: toISO(pe), label: "前月" };
   }
 
   if (state.mode === "year") {
     const y = start.getFullYear() - 1;
-    return { start: `${y}-01-01`, end: `${y}-12-31`, label: "前一年" };
+    return { start: `${y}-01-01`, end: `${y}-12-31`, label: "前年" };
   }
 
   if (state.mode === "day") {
     const d = addDays(start, -1);
-    return { start: toISO(d), end: toISO(d), label: "前一日" };
+    return { start: toISO(d), end: toISO(d), label: "前日" };
   }
 
   const days = Math.max(1, Math.round((end - start) / 86400000) + 1);
   const pe = addDays(start, -1);
   const ps = addDays(pe, -(days - 1));
-  return { start: toISO(ps), end: toISO(pe), label: "前段區間" };
+  return { start: toISO(ps), end: toISO(pe), label: "前期" };
 }
 
 function dailyRangeText(r){
