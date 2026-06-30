@@ -59,6 +59,59 @@
       color:var(--muted);
       background:#fff;
     }
+    .status-pill{
+      display:inline-flex;
+      align-items:center;
+      gap:10px;
+      max-width:min(100%, 720px);
+      vertical-align:middle;
+    }
+    .status-progress{
+      position:relative;
+      width:120px;
+      height:8px;
+      border-radius:999px;
+      overflow:hidden;
+      background:#dbeafe;
+      flex:0 0 120px;
+      box-shadow:inset 0 0 0 1px rgba(96,165,250,.18);
+    }
+    .status-progress-fill{
+      position:absolute;
+      left:0; top:0; bottom:0;
+      width:0%;
+      border-radius:999px;
+      background:linear-gradient(90deg,#bfdbfe 0%, #93c5fd 45%, #60a5fa 100%);
+      transition:width .25s ease;
+    }
+    .status-inline{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      min-width:0;
+    }
+    .status-circle{
+      --p:0;
+      position:relative;
+      width:16px;
+      height:16px;
+      border-radius:999px;
+      flex:0 0 16px;
+      background:conic-gradient(#0f172a calc(var(--p) * 1%), #cbd5e1 0);
+      box-shadow:inset 0 0 0 1px rgba(15,23,42,.06);
+    }
+    .status-circle::after{
+      content:"";
+      position:absolute;
+      inset:2px;
+      border-radius:999px;
+      background:#fff;
+    }
+    .status-text{
+      min-width:0;
+      line-height:1.35;
+      white-space:nowrap;
+    }
     .muted{color:var(--muted)}
     .mono{font-variant-numeric:tabular-nums}
     .kpi-title{font-size:13px;color:var(--muted)}
@@ -378,8 +431,8 @@ const FACTORIES = {
 const state = {
   mode: "month",
   factories: {
-    jinxin: { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set() },
-    daxi: { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set() }
+    jinxin: { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() },
+    daxi: { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() }
   },
   dateMin: null,
   dateMax: null,
@@ -387,7 +440,9 @@ const state = {
   monthsByYear: {},
   weeksAll: [],
   charts: { trend: null, bar: null },
-  mirrorTopSource: null
+  mirrorTopSource: null,
+  backgroundPreload: { active: false, done: 0, total: 0 },
+  backgroundPreloadToken: 0
 };
 
 const $ = id => document.getElementById(id);
@@ -1172,28 +1227,53 @@ function getNeededMonthKeys(){
   return [];
 }
 
-async function loadFactoryFiles(key, files){
+async function loadFactoryFiles(key, files, options={}){
   const factory = FACTORIES[key];
   const target = state.factories[key];
-  const todo = (files || []).filter(p => !target.loadedFiles.has(p) && !target.loadingFiles.has(p));
-  if (!todo.length) return;
+  if (!factory || !target) return;
+  target.loadedFiles = target.loadedFiles || new Set();
+  target.loadingFiles = target.loadingFiles || new Set();
+  target.loadPromises = target.loadPromises || new Map();
 
-  for (const p of todo) target.loadingFiles.add(p);
+  const uniqueFiles = Array.from(new Set(files || [])).filter(Boolean);
+  if (!uniqueFiles.length) return;
 
-  for (const p of todo){
-    try{
-      const wb = await fetchWorkbook(factory.baseUrl + "data/" + encodePath(p));
-      target.summary.push(...parseSummaryFromWB(wb, p));
-      target.details.push(...parseDetailsFromWB(wb, p));
-      target.loadedFiles.add(p);
-    }catch(e){
-      console.warn(key, p, e);
-      target.errors.push(p);
-    }finally{
-      target.loadingFiles.delete(p);
+  const jobs = uniqueFiles.map(p => {
+    if (target.loadedFiles.has(p)) {
+      if (options.onFileDone) options.onFileDone(key, p, true);
+      return Promise.resolve({file:p, skipped:true});
     }
-  }
+    if (target.loadPromises.has(p)) {
+      return target.loadPromises.get(p).then(res => {
+        if (options.onFileDone) options.onFileDone(key, p, res?.ok !== false);
+        return res;
+      });
+    }
 
+    target.loadingFiles.add(p);
+    const job = (async () => {
+      try{
+        const wb = await fetchWorkbook(factory.baseUrl + "data/" + encodePath(p));
+        target.summary.push(...parseSummaryFromWB(wb, p));
+        target.details.push(...parseDetailsFromWB(wb, p));
+        target.loadedFiles.add(p);
+        if (options.onFileDone) options.onFileDone(key, p, true);
+        return {file:p, ok:true};
+      }catch(e){
+        console.warn(key, p, e);
+        target.errors.push(p);
+        if (options.onFileDone) options.onFileDone(key, p, false);
+        return {file:p, ok:false, error:e};
+      }finally{
+        target.loadingFiles.delete(p);
+        target.loadPromises.delete(p);
+      }
+    })();
+    target.loadPromises.set(p, job);
+    return job;
+  });
+
+  await Promise.all(jobs);
   dedupeFactoryData(target);
 }
 
@@ -1201,12 +1281,37 @@ async function ensureDataForCurrentRange(){
   const monthKeys = getNeededMonthKeys();
   if (!monthKeys.length) return;
   const currentText = $("dataStatus").textContent;
-  $("dataStatus").innerHTML = `<span class="loader"></span> 載入 ${monthKeys.join(", ")} 資料中...`;
+  setDataStatus(`載入 ${monthKeys.join(", ")} 資料中...`, { loading:true });
   await Promise.all(["jinxin","daxi"].map(key => {
     const files = filesForMonthKeys(state.factories[key].files, monthKeys);
     return loadFactoryFiles(key, files);
   }));
   $("dataStatus").textContent = `已載入：晉欣 ${state.factories.jinxin.loadedFiles.size}/${state.factories.jinxin.files.length} 份；大溪 ${state.factories.daxi.loadedFiles.size}/${state.factories.daxi.files.length} 份`;
+}
+
+function statusMessageHtml(message, loading=false, progressStyle="bar", progress=null){
+  const safe = escapeHTML(safeStr(message));
+  if (Number.isFinite(progress) && progressStyle === "circle") {
+    return `<span class="status-inline"><span class="status-circle" aria-hidden="true" style="--p:${progress}"></span><span class="status-text">${safe}</span></span>`;
+  }
+  return loading
+    ? `<span class="status-inline"><span class="loader"></span><span class="status-text">${safe}</span></span>`
+    : `<span class="status-text">${safe}</span>`;
+}
+
+function setDataStatus(message, options={}){
+  const el = $("dataStatus");
+  if (!el) return;
+  const loading = !!options.loading;
+  const rawProgress = options.progress;
+  const hasProgress = Number.isFinite(rawProgress);
+  const progress = hasProgress ? Math.max(0, Math.min(100, Number(rawProgress))) : null;
+  const progressStyle = options.progressStyle || "bar";
+  el.classList.add("status-pill");
+  const barHtml = hasProgress && progressStyle === "bar"
+    ? `<span class="status-progress" aria-hidden="true"><span class="status-progress-fill" style="width:${progress}%"></span></span>`
+    : "";
+  el.innerHTML = `${barHtml}${statusMessageHtml(message, loading, progressStyle, progress)}`;
 }
 
 async function loadFactory(key){
@@ -1219,7 +1324,8 @@ async function loadFactory(key){
     files,
     errors: [],
     loadedFiles: new Set(),
-    loadingFiles: new Set()
+    loadingFiles: new Set(),
+    loadPromises: new Map()
   };
 }
 
@@ -1512,7 +1618,7 @@ function renderEmptyState(message){
   const dailyRange = $("dailyDetailRangeLabel"); if (dailyRange) dailyRange.textContent = msg;
   const tA = $("slotATopTitle"); if (tA) tA.textContent = "廠別 A｜報廢 / 超用 Top 10";
   const tB = $("slotBTopTitle"); if (tB) tB.textContent = "廠別 B｜報廢 / 超用 Top 10";
-  $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
+  setDataStatus("尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料");
 }
 
 function renderCards(data){
@@ -1946,7 +2052,7 @@ function selectedFactoryKeys(){
   return (state.selectedFactoryKeys || []).filter(k => FACTORIES[k]).slice(0, 2);
 }
 function slotKey(slot){ return selectedFactoryKeys()[slot] || null; }
-function emptyFactoryState(){ return { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set() }; }
+function emptyFactoryState(){ return { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() }; }
 
 function goSite(key){
   const f = FACTORIES[key];
@@ -2044,14 +2150,14 @@ async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
   const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
-  return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set() };
+  return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() };
 }
 
 async function ensureFactoryIndex(key){
   if (!FACTORIES[key]) return;
   const cur = state.factories[key];
   if (cur && Array.isArray(cur.files) && cur.files.length) return;
-  $("dataStatus").innerHTML = `<span class="loader"></span> 讀取${FACTORIES[key].name}資料索引中...`;
+  setDataStatus(`讀取${FACTORIES[key].name}資料索引中...`, { loading:true });
   try{
     state.factories[key] = await loadFactory(key);
   }catch(e){
@@ -2062,7 +2168,9 @@ async function ensureFactoryIndex(key){
 }
 
 async function loadAll(){
-  $("dataStatus").innerHTML = `<span class="loader"></span> 讀取四廠資料索引中...`;
+  state.backgroundPreloadToken += 1;
+  state.backgroundPreload = { active: false, done: 0, total: 0 };
+  setDataStatus("讀取四廠資料索引中...", { loading:true });
   await ensureLibs();
 
   // 重整時保留目前勾選；初次進入仍預設不勾選任何工廠。
@@ -2097,12 +2205,24 @@ async function loadAll(){
     recentKeysByFactory[key] = recentMonthKeysFromManifest(state.factories[key].files || [], 3);
   }
   const recentLabel = Array.from(new Set(Object.values(recentKeysByFactory).flat())).sort().join("、") || "近三個月";
-  $("dataStatus").innerHTML = `<span class="loader"></span> 預先載入四廠近三個月資料中（${recentLabel}）...`;
-
-  await Promise.all(allFactoryKeys().map(key => {
-    const files = filesForMonthKeys(state.factories[key].files || [], recentKeysByFactory[key] || []);
-    return loadFactoryFiles(key, files);
+  const recentPlans = allFactoryKeys().map(key => ({
+    key,
+    files: filesForMonthKeys(state.factories[key].files || [], recentKeysByFactory[key] || [])
   }));
+  const recentTotal = recentPlans.reduce((sum, item) => sum + item.files.length, 0);
+  let recentDone = 0;
+  const updateRecentPreloadStatus = () => {
+    const ratio = recentTotal > 0 ? (recentDone / recentTotal * 100) : 100;
+    setDataStatus(`預先載入四廠近三個月資料中（${recentLabel}） ${recentDone}/${recentTotal} 份`, { progress: ratio, progressStyle:"circle" });
+  };
+  updateRecentPreloadStatus();
+
+  await Promise.all(recentPlans.map(item => loadFactoryFiles(item.key, item.files, {
+    onFileDone: () => {
+      recentDone += 1;
+      updateRecentPreloadStatus();
+    }
+  })));
 
   buildGlobalDatesFromLoadedOrManifest();
   buildSelectors();
@@ -2111,13 +2231,16 @@ async function loadAll(){
   const preloadSummary = allFactoryKeys()
     .map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`)
     .join("；");
-  $("dataStatus").textContent = `已預載四廠近三個月資料：${preloadSummary}`;
+  setDataStatus(`已預載四廠近三個月資料：${preloadSummary}`);
 
   if (keepSelected.length) {
     await renderAll();
   } else {
-    renderEmptyState("已預載四廠近三個月資料；請選擇 1～2 個工廠進行對比。若切換到較早月份，系統會再補讀該月份資料。");
+    renderEmptyState("已預載四廠近三個月資料；請選擇 1～2 個工廠進行對比。其他月份會在背景持續載入，後續切換月份時可直接使用。");
   }
+
+  // 近三個月先完成並顯示後，再非阻塞背景讀取其餘月份。
+  startBackgroundLoadAllFactories();
 }
 
 function buildGlobalDatesFromManifest(){
@@ -2223,19 +2346,89 @@ function buildSelectors(keep=null){
 async function ensureDataForCurrentRange(){
   const selected = selectedFactoryKeys();
   if (!selected.length) {
-    $("dataStatus").textContent = "尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料";
+    setDataStatus("尚未選擇工廠；請先選擇 1～2 個工廠後再載入資料");
     return;
   }
   for (const key of selected) await ensureFactoryIndex(key);
   const monthKeys = getNeededMonthKeys();
   if (!monthKeys.length) return;
-  $("dataStatus").innerHTML = `<span class="loader"></span> 載入 ${monthKeys.join(", ")} 資料中...`;
+  setDataStatus(`載入 ${monthKeys.join(", ")} 資料中...`, { loading:true });
   await Promise.all(selected.map(key => {
     const files = filesForMonthKeys(state.factories[key].files, monthKeys);
     return loadFactoryFiles(key, files);
   }));
-  $("dataStatus").textContent = `已載入：` + selected.map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`).join("；");
+  setDataStatus(`已載入：` + selected.map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`).join("；"));
 }
+
+function getFactoryRemainingFiles(key){
+  const fstate = state.factories[key] || emptyFactoryState();
+  fstate.loadedFiles = fstate.loadedFiles || new Set();
+  fstate.loadingFiles = fstate.loadingFiles || new Set();
+  return (fstate.files || []).filter(p => !fstate.loadedFiles.has(p));
+}
+
+function backgroundStatusText(done, total){
+  const parts = allFactoryKeys().map(k => {
+    const fs = state.factories[k] || emptyFactoryState();
+    return `${FACTORIES[k].name} ${fs.loadedFiles?.size || 0}/${(fs.files || []).length} 份`;
+  }).join("；");
+  return `已優先顯示近三個月資料；背景載入其他月份 ${done}/${total} 份｜${parts}`;
+}
+
+function startBackgroundLoadAllFactories(){
+  const token = ++state.backgroundPreloadToken;
+  const plan = [];
+  for (const key of allFactoryKeys()){
+    for (const file of getFactoryRemainingFiles(key)) plan.push({key, file});
+  }
+
+  state.backgroundPreload = { active: true, done: 0, total: plan.length };
+  if (!plan.length){
+    state.backgroundPreload.active = false;
+    setDataStatus("四廠全部資料已載入完成。", { progress:100 });
+    return;
+  }
+
+  const updateStatus = () => {
+    if (token !== state.backgroundPreloadToken) return;
+    const bg = state.backgroundPreload || {done:0,total:0};
+    setDataStatus(backgroundStatusText(bg.done, bg.total), { progress: bg.total ? (bg.done / bg.total * 100) : 0 });
+  };
+  updateStatus();
+
+  (async () => {
+    // 使用小批次背景載入，避免一次打開太多 Excel 造成瀏覽器卡頓；前台仍可操作。
+    const batchSize = 2;
+    for (let i=0; i<plan.length; i+=batchSize){
+      if (token !== state.backgroundPreloadToken) return;
+      const batch = plan.slice(i, i + batchSize);
+      await Promise.all(batch.map(item => loadFactoryFiles(item.key, [item.file], {
+        onFileDone: () => {
+          if (token !== state.backgroundPreloadToken) return;
+          state.backgroundPreload.done += 1;
+          updateStatus();
+        }
+      })));
+      // 將控制權還給瀏覽器，讓已顯示的近三個月資料與 UI 不被背景讀檔阻塞。
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+    if (token !== state.backgroundPreloadToken) return;
+    state.backgroundPreload.active = false;
+    buildGlobalDatesFromLoadedOrManifest();
+    buildSelectors(captureTimeSelection());
+    renderFactorySelector();
+    setDataStatus("四廠全部月份資料已在背景載入完成。", { progress:100 });
+    if (selectedFactoryKeys().length) {
+      renderAll().catch(e => { console.error(e); toast("資料渲染失敗"); });
+    }
+  })().catch(e => {
+    if (token !== state.backgroundPreloadToken) return;
+    console.error(e);
+    state.backgroundPreload.active = false;
+    toast("背景載入其他月份資料時發生錯誤，已保留目前已載入資料。");
+  });
+}
+
 
 function currentData(){
   const {start,end} = getDateRange();
@@ -2845,7 +3038,7 @@ function wireUI(){
 wireUI();
 loadAll().catch(e => {
   console.error(e);
-  $("dataStatus").textContent = "資料讀取失敗";
+  setDataStatus("資料讀取失敗");
   toast("資料讀取失敗：請確認兩個原網站的 data/manifest.json 是否可公開讀取。");
 });
 </script>
