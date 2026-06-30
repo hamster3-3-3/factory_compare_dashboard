@@ -218,7 +218,8 @@
               <option value="sales">營業額</option>
               <option value="scrapAmt">報廢額</option>
               <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用額</option>
+              <option value="overuseAmt">超用金額A(多產)</option>
+              <option value="overuseAmtB" data-post-may-only="1">超用金額B(多產-廢棄)</option>
               <option value="overuseRate">超用率</option>
             </select>
           </div>
@@ -226,7 +227,7 @@
       </div>
     </section>
 
-    <section class="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3" id="kpiCards"></section>
+    <section class="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3" id="kpiCards"></section>
 
     <section class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
       <div class="card p-4">
@@ -295,7 +296,8 @@
             <select id="slotATopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
               <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用金額</option>
+              <option value="overuseAmt">超用金額A(多產)</option>
+              <option value="overuseAmtB" data-post-may-only="1">超用金額B(多產-廢棄)</option>
               <option value="overuseRate">超用率</option>
             </select>
             <button id="commonTopBtnA" type="button" class="seg-btn" title="讓右側表格依照左側目前半成品排序顯示">對方廠共有</button>
@@ -324,7 +326,8 @@
             <select id="slotBTopType" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">
               <option value="scrapAmt">報廢金額</option>
               <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用金額</option>
+              <option value="overuseAmt">超用金額A(多產)</option>
+              <option value="overuseAmtB" data-post-may-only="1">超用金額B(多產-廢棄)</option>
               <option value="overuseRate">超用率</option>
             </select>
             <button id="commonTopBtnB" type="button" class="seg-btn" title="讓左側表格依照右側目前半成品排序顯示">對方廠共有</button>
@@ -547,14 +550,47 @@ function fmtMetric(k, v){
   if (["scrapRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
   return fmtMoney(v);
 }
+function isPostMayOveruseLayout(data=null){
+  const start = safeStr(data?.start || data?.chartStart || "");
+  if (start) return start >= "2026-05-01";
+  try{
+    const r = getDateRange();
+    return safeStr(r.start) >= "2026-05-01";
+  }catch(_){ return !!state._postMayOveruseLayout; }
+}
+function overuseAmtAValue(row){ return Number(row?.overuseAmt) || 0; }
+function overuseAmtBValue(row){ return overuseAmtAValue(row) - (Number(row?.scrapAmt) || 0); }
+function overuseAmtALabel(){ return state._postMayOveruseLayout ? "超用金額A(多產)" : "超用金額(多產-廢棄)"; }
+function overuseAmtBLabel(){ return "超用金額B(多產-廢棄)"; }
 function metricLabel(k){
+  if (k === "overuseAmt") return overuseAmtALabel();
+  if (k === "overuseAmtB") return overuseAmtBLabel();
   return {
     sales:"營業額", scrapAmt:"報廢額", scrapRate:"報廢率",
-    overuseAmt:"超用額", overuseRate:"超用率",
+    overuseRate:"超用率",
     topScrapAmt:"廢棄前10名金額", topScrapShare:"廢棄前10名構成比",
     topOverAmt:"超用前10名金額", topOverShare:"超用前10名構成比",
     sharedAmt:"共用類廢棄金額", sharedShare:"共用類廢棄構成比"
   }[k] || k;
+}
+function displayMetricKeys(data=null){
+  const postMay = isPostMayOveruseLayout(data);
+  return ["sales","scrapAmt","scrapRate","overuseAmt", ...(postMay ? ["overuseAmtB"] : []), "overuseRate"];
+}
+function syncOveruseMetricControls(data=null){
+  const postMay = isPostMayOveruseLayout(data);
+  state._postMayOveruseLayout = postMay;
+  const aLabel = overuseAmtALabel();
+  const bLabel = overuseAmtBLabel();
+  document.querySelectorAll('option[value="overuseAmt"]').forEach(opt => { opt.textContent = aLabel; });
+  document.querySelectorAll('option[value="overuseAmtB"]').forEach(opt => {
+    opt.textContent = bLabel;
+    opt.hidden = !postMay;
+    opt.disabled = !postMay;
+  });
+  document.querySelectorAll('select').forEach(sel => {
+    if (!postMay && sel.value === "overuseAmtB") sel.value = "overuseAmt";
+  });
 }
 
 async function ensureLibs(){
@@ -1515,6 +1551,7 @@ function summaryAgg(rows){
   let sales = 0;
   let scrapAmt = 0;
   let overuseAmt = 0;
+  let overuseAmtB = 0;
   let topScrapAmt = 0;
   let topOverAmt = 0;
   let sharedAmt = 0;
@@ -1530,12 +1567,13 @@ function summaryAgg(rows){
     sales += inferredSales > 0 ? inferredSales : 0;
     scrapAmt += sc;
     overuseAmt += ov;
+    overuseAmtB += overuseAmtBValue(b);
     topScrapAmt += +b.topScrapAmt || 0;
     topOverAmt += +b.topOverAmt || 0;
     sharedAmt += +b.sharedAmt || 0;
   }
   return {
-    sales, scrapAmt, overuseAmt, topScrapAmt, topOverAmt, sharedAmt,
+    sales, scrapAmt, overuseAmt, overuseAmtB, topScrapAmt, topOverAmt, sharedAmt,
     scrapRate: sales > 0 ? scrapAmt / sales : null,
     overuseRate: sales > 0 ? overuseAmt / sales : null,
     topScrapShare: scrapAmt > 0 ? topScrapAmt / scrapAmt : null,
@@ -1593,6 +1631,7 @@ async function renderAll(){
   await ensureDataForCurrentRange();
   await ensureDailyDetailDataForCurrentSelection();
   const data = currentData();
+  syncOveruseMetricControls(data);
   renderCards(data);
   renderTable(data);
   renderCharts(data);
@@ -1622,7 +1661,8 @@ function renderEmptyState(message){
 }
 
 function renderCards(data){
-  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
+  syncOveruseMetricControls(data);
+  const metrics = displayMetricKeys(data);
   $("kpiCards").innerHTML = metrics.map(k => {
     const j = data.jinxin.agg[k], d = data.daxi.agg[k];
     const diff = (d ?? 0) - (j ?? 0);
@@ -1646,12 +1686,13 @@ function renderCards(data){
   }).join("");
 }
 function renderTable(data){
-  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
+  syncOveruseMetricControls(data);
+  const metrics = displayMetricKeys(data);
   $("compareTbody").innerHTML = metrics.map(k => {
     const j = data.jinxin.agg[k], d = data.daxi.agg[k];
     const diff = (d ?? 0) - (j ?? 0);
     const diffRate = (j && Number.isFinite(j) && j !== 0) ? diff / j : null;
-    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseRate","sharedShare"].includes(k);
+    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseAmtB","overuseRate","sharedShare"].includes(k);
     let judge = "—";
     if (Number.isFinite(diff)){
       if (Math.abs(diff) < 1e-9) judge = "兩廠接近";
@@ -1670,6 +1711,7 @@ function renderTable(data){
 }
 function destroyChart(key){ if (state.charts[key]){ state.charts[key].destroy(); state.charts[key] = null; } }
 function renderCharts(data){
+  syncOveruseMetricControls(data);
   const metric = $("metricSel").value;
   const gran = granularity(data.start,data.end);
   const sj = aggregateSeries(data.jinxin.summaryRows, metric, gran);
@@ -1792,6 +1834,8 @@ function topRowQtyFromRate(row, qtyKey, rateKey){
 function completeTopMetrics(o){
   o.scrapRate = o.order > 0 ? o.scrapQty / o.order : null;
   o.overuseRate = o.order > 0 ? o.overuseQty / o.order : null;
+  o.overuseAmtA = Number(o.overuseAmt) || 0;
+  o.overuseAmtB = (Number(o.overuseAmt) || 0) - (Number(o.scrapAmt) || 0);
   return o;
 }
 
@@ -1842,6 +1886,8 @@ function aggregateTopBySemi(details, metric, classFilter="all"){
       overuseQty: o.overuseQty,
       scrapAmt: o.scrapAmt,
       overuseAmt: o.overuseAmt,
+      overuseAmtA: o.overuseAmtA,
+      overuseAmtB: o.overuseAmtB,
       scrapRate: o.scrapRate,
       overuseRate: o.overuseRate,
       exists: true
@@ -1913,6 +1959,8 @@ function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
         scrapAmt: null,
         scrapRate: null,
         overuseAmt: null,
+        overuseAmtA: null,
+        overuseAmtB: null,
         overuseRate: null,
         exists: false
       });
@@ -1936,7 +1984,8 @@ function topMetricColumnLabel(metric){
   return {
     scrapAmt: "報廢金額",
     scrapRate: "報廢率",
-    overuseAmt: "超用金額",
+    overuseAmt: metricLabel("overuseAmt"),
+    overuseAmtB: metricLabel("overuseAmtB"),
     overuseRate: "超用率"
   }[metric] || "數值";
 }
@@ -2352,12 +2401,37 @@ async function ensureDataForCurrentRange(){
   for (const key of selected) await ensureFactoryIndex(key);
   const monthKeys = getNeededMonthKeys();
   if (!monthKeys.length) return;
-  setDataStatus(`載入 ${monthKeys.join(", ")} 資料中...`, { loading:true });
-  await Promise.all(selected.map(key => {
-    const files = filesForMonthKeys(state.factories[key].files, monthKeys);
-    return loadFactoryFiles(key, files);
+
+  const filePlans = selected.map(key => ({
+    key,
+    files: filesForMonthKeys(state.factories[key].files || [], monthKeys)
   }));
-  setDataStatus(`已載入：` + selected.map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`).join("；"));
+  const total = filePlans.reduce((sum, item) => sum + item.files.length, 0);
+  let done = 0;
+
+  const updateRangeStatus = () => {
+    if (state.backgroundPreload?.active) {
+      renderBackgroundPreloadStatus();
+      return;
+    }
+    const progress = total ? (done / total * 100) : 100;
+    setDataStatus("選擇月份資料載入中", { progress });
+  };
+
+  if (total > 0) updateRangeStatus();
+
+  await Promise.all(filePlans.map(item => loadFactoryFiles(item.key, item.files, {
+    onFileDone: () => {
+      done += 1;
+      updateRangeStatus();
+    }
+  })));
+
+  if (state.backgroundPreload?.active) {
+    renderBackgroundPreloadStatus();
+  } else if (total > 0) {
+    setDataStatus("目前選擇月份資料已載入完成", { progress:100 });
+  }
 }
 
 function getFactoryRemainingFiles(key){
@@ -2368,11 +2442,16 @@ function getFactoryRemainingFiles(key){
 }
 
 function backgroundStatusText(done, total){
-  const parts = allFactoryKeys().map(k => {
-    const fs = state.factories[k] || emptyFactoryState();
-    return `${FACTORIES[k].name} ${fs.loadedFiles?.size || 0}/${(fs.files || []).length} 份`;
-  }).join("；");
-  return `已優先顯示近三個月資料；背景載入其他月份 ${done}/${total} 份｜${parts}`;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 100;
+  return pct >= 100
+    ? "其他月份背景載入完成"
+    : `其他月份背景載入中 ${pct}%`;
+}
+
+function renderBackgroundPreloadStatus(){
+  const bg = state.backgroundPreload || {done:0,total:0,active:false};
+  const progress = bg.total ? (bg.done / bg.total * 100) : 0;
+  setDataStatus(backgroundStatusText(bg.done, bg.total), { progress });
 }
 
 function startBackgroundLoadAllFactories(){
@@ -2391,8 +2470,7 @@ function startBackgroundLoadAllFactories(){
 
   const updateStatus = () => {
     if (token !== state.backgroundPreloadToken) return;
-    const bg = state.backgroundPreload || {done:0,total:0};
-    setDataStatus(backgroundStatusText(bg.done, bg.total), { progress: bg.total ? (bg.done / bg.total * 100) : 0 });
+    renderBackgroundPreloadStatus();
   };
   updateStatus();
 
@@ -2417,7 +2495,7 @@ function startBackgroundLoadAllFactories(){
     buildGlobalDatesFromLoadedOrManifest();
     buildSelectors(captureTimeSelection());
     renderFactorySelector();
-    setDataStatus("四廠全部月份資料已在背景載入完成。", { progress:100 });
+    setDataStatus("其他月份背景載入完成", { progress:100 });
     if (selectedFactoryKeys().length) {
       renderAll().catch(e => { console.error(e); toast("資料渲染失敗"); });
     }
@@ -2444,7 +2522,8 @@ function currentData(){
 }
 
 function renderCards(data){
-  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
+  syncOveruseMetricControls(data);
+  const metrics = displayMetricKeys(data);
   const slots = data.slots;
   $("kpiCards").innerHTML = metrics.map(k => {
     const values = slots.map(s => `<div><div class="kpi-sub">${FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono" style="color:${FACTORIES[s.key].color}">${fmtMetric(k, s.agg[k])}</div></div>`).join("");
@@ -2458,7 +2537,8 @@ function renderCards(data){
 }
 
 function renderTable(data){
-  const metrics = ["sales","scrapAmt","scrapRate","overuseAmt","overuseRate"];
+  syncOveruseMetricControls(data);
+  const metrics = displayMetricKeys(data);
   const slots = data.slots;
   const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
   if (header) {
@@ -2473,7 +2553,7 @@ function renderTable(data){
     const a = slots[0].agg[k], b = slots[1].agg[k];
     const diff = (b ?? 0) - (a ?? 0);
     const diffRate = (a && Number.isFinite(a) && a !== 0) ? diff / a : null;
-    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseRate","sharedShare"].includes(k);
+    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseAmtB","overuseRate","sharedShare"].includes(k);
     let judge = "—";
     if (Number.isFinite(diff)){
       if (Math.abs(diff) < 1e-9) judge = "兩廠接近";
@@ -2485,6 +2565,7 @@ function renderTable(data){
 }
 
 function renderCharts(data){
+  syncOveruseMetricControls(data);
   const metric = $("metricSel").value;
   const gran = granularity(data.start,data.end);
   const isRate = metric.includes("Rate") || metric.includes("Share");
@@ -2509,12 +2590,26 @@ function renderCharts(data){
     options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabel(metric)}：${tip(c.parsed.y)}`}}}, scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}}
   });
 
-  const barLabels = ["報廢額", "超用額", "報廢率", "超用率"];
-  const barMetricByIndex = ["scrapAmt", "overuseAmt", "scrapRate", "overuseRate"];
+  const postMay = isPostMayOveruseLayout(data);
+  const amountMetrics = postMay ? ["scrapAmt", "overuseAmt", "overuseAmtB"] : ["scrapAmt", "overuseAmt"];
+  const rateMetrics = ["scrapRate", "overuseRate"];
+  const barMetricByIndex = [...amountMetrics, ...rateMetrics];
+  const barLabels = barMetricByIndex.map(metricLabel);
   const barSets = [];
   for (const s of data.slots){
-    barSets.push({label:`${FACTORIES[s.key].name}｜金額`, data:[s.agg.scrapAmt, s.agg.overuseAmt, null, null], backgroundColor:FACTORIES[s.key].color, yAxisID:"y"});
-    barSets.push({label:`${FACTORIES[s.key].name}｜比率`, data:[null, null, s.agg.scrapRate, s.agg.overuseRate], backgroundColor:FACTORIES[s.key].color + "55", borderColor:FACTORIES[s.key].color, yAxisID:"y1"});
+    barSets.push({
+      label:`${FACTORIES[s.key].name}｜金額`,
+      data:[...amountMetrics.map(m => s.agg[m]), ...rateMetrics.map(() => null)],
+      backgroundColor:FACTORIES[s.key].color,
+      yAxisID:"y"
+    });
+    barSets.push({
+      label:`${FACTORIES[s.key].name}｜比率`,
+      data:[...amountMetrics.map(() => null), ...rateMetrics.map(m => s.agg[m])],
+      backgroundColor:FACTORIES[s.key].color + "55",
+      borderColor:FACTORIES[s.key].color,
+      yAxisID:"y1"
+    });
   }
   destroyChart("bar");
   state.charts.bar = new Chart($("barChart").getContext("2d"), {
@@ -2530,6 +2625,7 @@ function syncCommonTopButtons(){
 }
 
 function renderTopTables(data){
+  syncOveruseMetricControls(data);
   const slots = data.slots;
   syncCommonTopButtons();
   const slotCfg = [
@@ -2743,12 +2839,21 @@ function getDailyDetailColumns(){
     { label: "訂單需求", cell: r => fmtDailyQty(r.order), cls: "text-right mono" }
   ];
   if (!expand && !rate){
+    const usePostMay = isPostMayOveruseLayout();
+    const overCols = usePostMay
+      ? [
+          { label: "超用金額A(多產)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+          { label: "超用金額B(多產-廢棄)", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
+        ]
+      : [
+          { label: "超用金額(多產-廢棄)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" }
+        ];
     return base.concat([
       { label: "總產出(kg)", cell: r => fmtDailyQty(getDailyValuePack(r).outputQty), cls: "text-right mono" },
       { label: "報廢數(kg)", cell: r => fmtDailyQty(r.scrapQty), cls: "text-right mono" },
       { label: "報廢金額", cell: r => fmtDailyMoney(r.scrapAmt), cls: "text-right mono" },
       { label: "超用數(kg)", cell: r => fmtDailyQty(r.overuseQty), cls: "text-right mono" },
-      { label: "超用金額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+      ...overCols,
       { label: "超用來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
     ]);
   }
@@ -2762,12 +2867,21 @@ function getDailyDetailColumns(){
     ]);
   }
   if (!expand && rate){
+    const usePostMay = isPostMayOveruseLayout();
+    const overCols = usePostMay
+      ? [
+          { label: "超用金額A(多產)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+          { label: "超用金額B(多產-廢棄)", cell: r => fmtDailyMoney(overuseAmtBValue(r)), cls: "text-right mono" }
+        ]
+      : [
+          { label: "超用金額(多產-廢棄)", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" }
+        ];
     return base.concat([
       { label: "總產出率", cell: r => fmtDailyPct(getDailyValuePack(r).prodRate), cls: "text-right mono" },
       { label: "報廢率", cell: r => fmtDailyPct(r.scrapRate), cls: "text-right mono" },
       { label: "報廢金額", cell: r => fmtDailyMoney(r.scrapAmt), cls: "text-right mono" },
       { label: "超用率", cell: r => fmtDailyPct(r.overuseRate), cls: "text-right mono" },
-      { label: "超用金額", cell: r => fmtDailyMoney(r.overuseAmt), cls: "text-right mono" },
+      ...overCols,
       { label: "超用來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
     ]);
   }
@@ -2913,6 +3027,7 @@ function renderDailySemiSuggestions(data){
 }
 
 function renderDailyDetailCard(data){
+  syncOveruseMetricControls(data);
   const dailyState = getDailyDetailState();
   renderDailyFactoryOptions();
 
