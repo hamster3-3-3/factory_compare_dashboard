@@ -2732,7 +2732,6 @@ function renderTable(data){
   syncOveruseMetricControls(data);
   const metrics = displayMetricKeys(data);
   const slots = data.slots || [];
-  const compareLabel = data.compareLabel || "比前期";
   const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
   const showDiff = slots.length === 2;
   if (header) {
@@ -2740,13 +2739,13 @@ function renderTable(data){
   }
   const sub = $("compareSub");
   if (sub) {
-    if (showDiff) sub.textContent = `各廠數值皆附 ${compareLabel} 的增減百分比；差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}`;
-    else if (slots.length > 2) sub.textContent = `三廠以上檢視：各廠數值皆附 ${compareLabel} 的增減百分比；不顯示差異、差異率與判讀`;
-    else sub.textContent = `單廠檢視：數值附 ${compareLabel} 的增減百分比`;
+    if (showDiff) sub.textContent = `差異 = ${FACTORIES[slots[1].key].name} - ${FACTORIES[slots[0].key].name}`;
+    else if (slots.length > 2) sub.textContent = "三廠以上檢視：僅顯示各廠數值，不顯示差異、差異率與判讀";
+    else sub.textContent = "單廠檢視，請再選擇工廠進行差異比較";
   }
 
   $("compareTbody").innerHTML = metrics.map(k => {
-    const valueCells = slots.map(s => `<td class="text-right mono">${renderMetricWithPeriodCompare(k, s.agg[k], s.prevAgg?.[k], compareLabel)}</td>`).join("");
+    const valueCells = slots.map(s => `<td class="text-right mono">${fmtMetric(k, s.agg[k])}</td>`).join("");
     if (!showDiff) return `<tr><td>${metricLabel(k)}</td>${valueCells}</tr>`;
     const a = slots[0].agg[k], b = slots[1].agg[k];
     const diff = (b ?? 0) - (a ?? 0);
@@ -2782,10 +2781,51 @@ function renderCharts(data){
   const legend = $("trendLegend");
   if (legend) legend.innerHTML = data.slots.map(s => `<span><i class="factory-dot" style="background:${FACTORIES[s.key].color}"></i> ${FACTORIES[s.key].name}</span>`).join("");
 
+  const trendDeltaLabelPlugin = {
+    id: "trendDeltaLabelPlugin",
+    afterDatasetsDraw(chart){
+      const {ctx, chartArea} = chart;
+      if (!chartArea) return;
+      ctx.save();
+      chart.data.datasets.forEach((dataset, datasetIndex) => {
+        const meta = chart.getDatasetMeta(datasetIndex);
+        if (!meta || meta.hidden) return;
+        const points = meta.data || [];
+        const values = dataset.data || [];
+        for (let i = 1; i < points.length; i++) {
+          const prevVal = Number(values[i - 1]);
+          const currVal = Number(values[i]);
+          const prevPoint = points[i - 1];
+          const currPoint = points[i];
+          if (!prevPoint || !currPoint || !Number.isFinite(prevVal) || !Number.isFinite(currVal) || prevVal === 0) continue;
+          const ratio = (currVal - prevVal) / prevVal;
+          const text = fmtChangePct(ratio);
+          const color = ratio > 0 ? "#dc2626" : (ratio < 0 ? "#16a34a" : "#64748b");
+          const midX = (prevPoint.x + currPoint.x) / 2;
+          const midY = (prevPoint.y + currPoint.y) / 2;
+          const slopeUp = currPoint.y < prevPoint.y;
+          const offsetBase = datasetIndex % 2 === 0 ? -12 : 12;
+          const offsetY = offsetBase + (slopeUp ? -8 : 8);
+          let textX = midX;
+          let textY = midY + offsetY;
+          textX = Math.max(chartArea.left + 24, Math.min(chartArea.right - 24, textX));
+          textY = Math.max(chartArea.top + 12, Math.min(chartArea.bottom - 8, textY));
+          ctx.font = "bold 11px 'Noto Sans TC', sans-serif";
+          ctx.fillStyle = color;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(text, textX, textY);
+        }
+      });
+      ctx.restore();
+    }
+  };
+
   destroyChart("trend");
   state.charts.trend = new Chart($("trendChart").getContext("2d"), {
     type:"line", data:{labels, datasets},
-    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabelForChart(metric)}：${tip(c.parsed.y)}`}}}, scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}}
+    options:{responsive:true, maintainAspectRatio:false, interaction:{mode:"index",intersect:false}, plugins:{legend:{display:true}, tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${metricLabelForChart(metric)}：${tip(c.parsed.y)}`}}}, scales:{y:{ticks:{callback:tick}, title:{display:true,text:isRate?"%":(isSales?"萬":"NT$")}}}},
+    plugins:[trendDeltaLabelPlugin]
   });
 
   const postMay = isPostMayOveruseLayout(data);
