@@ -140,6 +140,26 @@
       border-bottom:1px solid var(--line);
       padding:9px 12px;
     }
+
+    .chart-panel{position:relative;}
+    .chart-canvas-wrap{height:360px;}
+    .chart-expand-btn{font-size:12px;padding:6px 10px;}
+    #chartExpandBackdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:65;backdrop-filter:blur(2px);}
+    #chartExpandBackdrop.hidden{display:none;}
+    .chart-panel.chart-expanded{
+      position:fixed;
+      inset:24px;
+      z-index:70;
+      margin:0;
+      display:flex;
+      flex-direction:column;
+      box-shadow:0 20px 60px rgba(15,23,42,.28);
+    }
+    .chart-panel.chart-expanded .chart-canvas-wrap{height:calc(100vh - 150px);flex:1;}
+    @media (max-width:640px){
+      .chart-panel.chart-expanded{inset:12px;}
+      .chart-panel.chart-expanded .chart-canvas-wrap{height:calc(100vh - 130px);}
+    }
   </style>
 </head>
 
@@ -229,28 +249,32 @@
 
     <section class="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3" id="kpiCards"></section>
 
-    <section class="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
-      <div class="card p-4">
+    <section class="mt-4 grid grid-cols-1 gap-3">
+      <div id="trendCard" class="card p-4 chart-panel">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div class="text-sm font-bold">多廠 KPI 趨勢圖</div>
             <div class="text-xs muted mt-1">同一指標，多廠同圖比較</div>
           </div>
-          <div class="flex gap-3 text-xs muted" id="trendLegend"></div>
+          <div class="flex flex-wrap items-center gap-3">
+            <div class="flex gap-3 text-xs muted" id="trendLegend"></div>
+            <button type="button" class="seg-btn chart-expand-btn" onclick="toggleChartExpand('trendCard','trend')">放大</button>
+          </div>
         </div>
-        <div class="mt-3 h-[320px]">
+        <div class="mt-3 chart-canvas-wrap">
           <canvas id="trendChart"></canvas>
         </div>
       </div>
 
-      <div class="card p-4">
+      <div id="barCard" class="card p-4 chart-panel">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div class="text-sm font-bold">區間 KPI 比較</div>
             <div class="text-xs muted mt-1">以目前範圍加總後重算比率</div>
           </div>
+          <button type="button" class="seg-btn chart-expand-btn" onclick="toggleChartExpand('barCard','bar')">放大</button>
         </div>
-        <div class="mt-3 h-[320px]">
+        <div class="mt-3 chart-canvas-wrap">
           <canvas id="barChart"></canvas>
         </div>
       </div>
@@ -332,6 +356,7 @@
     </p>
   </div>
 
+  <div id="chartExpandBackdrop" class="hidden" onclick="closeExpandedChart()"></div>
   <div id="toast" class="toast"></div>
 
 <script>
@@ -386,7 +411,8 @@ const state = {
   charts: { trend: null, bar: null },
   mirrorTopSource: null,
   backgroundPreload: { active: false, done: 0, total: 0 },
-  backgroundPreloadToken: 0
+  backgroundPreloadToken: 0,
+  expandedChart: null
 };
 
 const $ = id => document.getElementById(id);
@@ -400,6 +426,39 @@ function toast(msg){
   clearTimeout(el._t);
   el._t = setTimeout(()=> el.style.display = "none", 4200);
 }
+
+function resizeChartByKey(chartKey){
+  const chart = state.charts?.[chartKey];
+  if (chart) setTimeout(() => chart.resize(), 80);
+}
+
+function closeExpandedChart(){
+  const backdrop = $("chartExpandBackdrop");
+  document.querySelectorAll('.chart-panel.chart-expanded').forEach(el => el.classList.remove('chart-expanded'));
+  if (backdrop) backdrop.classList.add('hidden');
+  document.body.classList.remove('overflow-hidden');
+  const last = state.expandedChart;
+  state.expandedChart = null;
+  if (last?.chartKey) resizeChartByKey(last.chartKey);
+}
+
+function toggleChartExpand(cardId, chartKey){
+  const card = $(cardId);
+  const backdrop = $("chartExpandBackdrop");
+  if (!card || !backdrop) return;
+  const alreadyExpanded = card.classList.contains('chart-expanded');
+  closeExpandedChart();
+  if (alreadyExpanded) return;
+  card.classList.add('chart-expanded');
+  backdrop.classList.remove('hidden');
+  document.body.classList.add('overflow-hidden');
+  state.expandedChart = { cardId, chartKey };
+  resizeChartByKey(chartKey);
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && state.expandedChart) closeExpandedChart();
+});
 
 function safeStr(x){ return x == null ? "" : String(x); }
 function normalizeHeader(x){ return safeStr(x).replace(/\s+/g,"").replace(/（/g,"(").replace(/）/g,")"); }
@@ -2803,13 +2862,17 @@ function renderCharts(data){
           const color = ratio > 0 ? "#dc2626" : (ratio < 0 ? "#16a34a" : "#64748b");
           const midX = (prevPoint.x + currPoint.x) / 2;
           const midY = (prevPoint.y + currPoint.y) / 2;
-          const slopeUp = currPoint.y < prevPoint.y;
-          const offsetBase = datasetIndex % 2 === 0 ? -12 : 12;
-          const offsetY = offsetBase + (slopeUp ? -8 : 8);
-          let textX = midX;
-          let textY = midY + offsetY;
-          textX = Math.max(chartArea.left + 24, Math.min(chartArea.right - 24, textX));
-          textY = Math.max(chartArea.top + 12, Math.min(chartArea.bottom - 8, textY));
+          const dx = currPoint.x - prevPoint.x;
+          const dy = currPoint.y - prevPoint.y;
+          const length = Math.hypot(dx, dy) || 1;
+          const nx = -dy / length;
+          const ny = dx / length;
+          const direction = datasetIndex % 2 === 0 ? 1 : -1;
+          const offsetDistance = 22 + (datasetIndex % 3) * 5;
+          let textX = midX + nx * offsetDistance * direction;
+          let textY = midY + ny * offsetDistance * direction;
+          textX = Math.max(chartArea.left + 28, Math.min(chartArea.right - 28, textX));
+          textY = Math.max(chartArea.top + 16, Math.min(chartArea.bottom - 12, textY));
           ctx.font = "bold 11px 'Noto Sans TC', sans-serif";
           ctx.fillStyle = color;
           ctx.textAlign = "center";
