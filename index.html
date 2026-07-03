@@ -227,21 +227,10 @@
           <div id="factorySelectHint" class="chip">已選擇 0 / 4</div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
-          <div class="lg:col-span-8">
+        <div class="grid grid-cols-1 gap-3 items-end">
+          <div>
             <label class="text-xs muted">對比工廠</label>
             <div class="mt-1 flex flex-wrap gap-2" id="factorySelectWrap"></div>
-          </div>
-          <div class="lg:col-span-4">
-            <label class="text-xs muted">對比指標</label>
-            <select id="metricSel" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white">
-              <option value="sales">營業額</option>
-              <option value="scrapAmt">報廢額</option>
-              <option value="scrapRate">報廢率</option>
-              <option value="overuseAmt">超用A(多產)</option>
-              <option value="overuseAmtB" data-post-may-only="1">超用B(多產-廢棄)</option>
-              <option value="overuseRate">超用率</option>
-            </select>
           </div>
         </div>
       </div>
@@ -256,7 +245,18 @@
             <div class="text-sm font-bold">多廠 KPI 趨勢圖</div>
             <div class="text-xs muted mt-1">同一指標，多廠同圖比較</div>
           </div>
-          <div class="flex flex-wrap items-center gap-3">
+          <div class="flex flex-wrap items-end justify-end gap-3">
+            <div class="min-w-[220px]">
+              <label class="text-xs muted">對比指標</label>
+              <select id="metricSel" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white">
+                <option value="sales">營業額</option>
+                <option value="scrapAmt">報廢額</option>
+                <option value="scrapRate">報廢率</option>
+                <option value="overuseAmt">超用A(多產)</option>
+                <option value="overuseAmtB" data-post-may-only="1">超用B(多產-廢棄)</option>
+                <option value="overuseRate">多產率</option>
+              </select>
+            </div>
             <div class="flex gap-3 text-xs muted" id="trendLegend"></div>
             <button type="button" class="seg-btn chart-expand-btn" onclick="toggleChartExpand('trendCard','trend')">放大</button>
           </div>
@@ -580,7 +580,7 @@ function metricLabel(k){
   if (k === "overuseAmtB") return overuseAmtBLabel();
   return {
     sales:"營業額", scrapAmt:"報廢額", scrapRate:"報廢率",
-    overuseRate:"超用率",
+    overuseRate:"多產率",
     topScrapAmt:"廢棄前10名金額", topScrapShare:"廢棄前10名構成比",
     topOverAmt:"超用前10名金額", topOverShare:"超用前10名構成比",
     sharedAmt:"共用類廢棄金額", sharedShare:"共用類廢棄構成比"
@@ -1962,7 +1962,7 @@ function renderCharts(data){
   });
 
   // 區間 KPI 比較：拿掉營業額；金額使用左側 Y 軸，百分比使用右側 Y 軸
-  const barLabels = ["報廢額", "超用B(多產-廢棄)", "報廢率", "超用率"];
+  const barLabels = ["報廢額", "超用B(多產-廢棄)", "報廢率", "多產率"];
   const barMetricByIndex = ["scrapAmt", "overuseAmt", "scrapRate", "overuseRate"];
   destroyChart("bar");
   state.charts.bar = new Chart($("barChart").getContext("2d"), {
@@ -2208,12 +2208,22 @@ function topMetricColumnLabel(metric){
     scrapRate: "報廢率",
     overuseAmt: metricLabel("overuseAmt"),
     overuseAmtB: metricLabel("overuseAmtB"),
-    overuseRate: "超用率"
+    overuseRate: "多產率"
   }[metric] || "數值";
 }
 function formatTopValue(v, metric){
   if (["scrapRate", "overuseRate"].includes(metric)) return fmtPct(v);
   return formatTopMoney(v);
+}
+function topRateSideAmountMetric(metric){
+  if (metric === "scrapRate") return "scrapAmt";
+  if (metric === "overuseRate") return "overuseAmt";
+  return null;
+}
+function topRateSideAmountLabel(metric){
+  const amountMetric = topRateSideAmountMetric(metric);
+  if (!amountMetric) return "";
+  return amountMetric === "scrapAmt" ? "報廢金額" : "超用金額";
 }
 
 function renderTopTables(data){
@@ -2943,7 +2953,7 @@ function topMetricOptionsHTML(selectedMetric, postMay=false){
     ["scrapRate", "報廢率"],
     ["overuseAmt", metricLabel("overuseAmt")],
     ...(postMay ? [["overuseAmtB", metricLabel("overuseAmtB")]] : []),
-    ["overuseRate", "超用率"]
+    ["overuseRate", "多產率"]
   ];
   return opts.map(([value, label]) => `<option value="${value}" ${value === selectedMetric ? "selected" : ""}>${label}</option>`).join("");
 }
@@ -2996,18 +3006,23 @@ function renderTopTables(data){
                       cfg.classFilter === "nonShared" ? "目前範圍無非共用類明細資料" :
                       "目前範圍無明細資料";
 
+    const sideAmountMetric = topRateSideAmountMetric(cfg.metric);
     const rowHtml = rows.map((r,j)=>{
       const canJump = r.exists !== false && safeStr(r.semi).trim();
       const semiCell = canJump
         ? `<button type="button" class="text-left hover:underline hover:text-slate-900" title="跳轉到${FACTORIES[cfg.key].name}的半成品日別明細" data-top-semi="${escapeHTML(r.semi)}" data-top-factory="${cfg.key}">${escapeHTML(r.semi)}</button>`
         : escapeHTML(r.semi || "—");
+      const sideAmountCell = sideAmountMetric
+        ? `<td class="text-right mono">${r.exists === false ? "—" : formatTopMoney(r[sideAmountMetric])}</td>`
+        : "";
       return `<tr class="${canJump ? "cursor-pointer" : ""}" ${canJump ? `data-top-semi-row="${escapeHTML(r.semi)}" data-top-factory-row="${cfg.key}" title="點擊半成品可跳轉到日別明細"` : ""}>
         <td class="mono">${j+1}</td>
         <td>${escapeHTML(r.product || "—")}</td>
         <td class="muted">${semiCell}</td>
+        ${sideAmountCell}
         <td class="text-right mono">${r.exists === false ? "—" : formatTopValue(r[cfg.metric], cfg.metric)}</td>
       </tr>`;
-    }).join("") || `<tr><td colspan="4" class="muted">${emptyText}</td></tr>`;
+    }).join("") || `<tr><td colspan="${sideAmountMetric ? 5 : 4}" class="muted">${emptyText}</td></tr>`;
 
     const otherSlot = slots.length === 2 ? slots.find(s => s.key !== cfg.key) : null;
     const commonBtn = otherSlot
@@ -3028,7 +3043,7 @@ function renderTopTables(data){
       </div>
       <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
         <table>
-          <thead><tr><th>#</th><th>商品名</th><th>半成品名</th><th class="text-right">${topMetricColumnLabel(cfg.metric)}</th></tr></thead>
+          <thead><tr><th>#</th><th>商品名</th><th>半成品名</th>${topRateSideAmountMetric(cfg.metric) ? `<th class="text-right">${topRateSideAmountLabel(cfg.metric)}</th>` : ""}<th class="text-right">${topMetricColumnLabel(cfg.metric)}</th></tr></thead>
           <tbody>${rowHtml}</tbody>
         </table>
       </div>
@@ -3352,7 +3367,7 @@ function getDailyDetailColumns(){
       { label: "總產出率", cell: r => fmtDailyPct(getDailyValuePack(r).prodRate), cls: "text-right mono" },
       { label: "報廢率", cell: r => fmtDailyPct(r.scrapRate), cls: "text-right mono" },
       { label: "報廢金額", cell: r => fmtDailyMoney(r.scrapAmt), cls: "text-right mono" },
-      { label: "超用率", cell: r => fmtDailyPct(r.overuseRate), cls: "text-right mono" },
+      { label: "多產率", cell: r => fmtDailyPct(r.overuseRate), cls: "text-right mono" },
       ...overCols,
       { label: "超用來自", cell: r => escapeHTML(deriveDailyDiffSource(r)), cls: "text-right" }
     ]);
