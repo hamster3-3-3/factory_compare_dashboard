@@ -254,10 +254,12 @@
                 <option value="scrapRate">報廢率</option>
                 <option value="overuseAmt">超用A(多產)</option>
                 <option value="overuseAmtB" data-post-may-only="1">超用B(多產-廢棄)</option>
+                <option value="overuseNetRate">超用率</option>
                 <option value="overuseRate">多產率</option>
               </select>
             </div>
-            <div class="flex gap-3 text-xs muted" id="trendLegend"></div>
+            <button type="button" id="trendDeltaToggleBtn" class="seg-btn chart-expand-btn" onclick="toggleTrendDeltaLabels()">顯示數值</button>
+            <div class="hidden" id="trendLegend"></div>
             <button type="button" class="seg-btn chart-expand-btn" onclick="toggleChartExpand('trendCard','trend')">放大</button>
           </div>
         </div>
@@ -412,7 +414,8 @@ const state = {
   mirrorTopSource: null,
   backgroundPreload: { active: false, done: 0, total: 0 },
   backgroundPreloadToken: 0,
-  expandedChart: null
+  expandedChart: null,
+  showTrendDeltaLabels: false
 };
 
 const $ = id => document.getElementById(id);
@@ -459,6 +462,19 @@ function toggleChartExpand(cardId, chartKey){
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && state.expandedChart) closeExpandedChart();
 });
+
+function updateTrendDeltaToggleBtn(){
+  const btn = $('trendDeltaToggleBtn');
+  if (!btn) return;
+  btn.classList.toggle('active', !!state.showTrendDeltaLabels);
+}
+
+function toggleTrendDeltaLabels(){
+  state.showTrendDeltaLabels = !state.showTrendDeltaLabels;
+  updateTrendDeltaToggleBtn();
+  const chart = state.charts?.trend;
+  if (chart) chart.draw();
+}
 
 function safeStr(x){ return x == null ? "" : String(x); }
 function normalizeHeader(x){ return safeStr(x).replace(/\s+/g,"").replace(/（/g,"(").replace(/）/g,")"); }
@@ -554,12 +570,12 @@ function fmtPct(n){
 }
 function fmtMetric(k, v){
   if (k === "sales") return fmtSalesWan(v);
-  if (["scrapRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
+  if (["scrapRate","overuseNetRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
   return fmtMoney(v);
 }
 function fmtMetricCard(k, v){
   if (k === "sales") return fmtSalesWan(v);
-  if (["scrapRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
+  if (["scrapRate","overuseNetRate","overuseRate","topScrapShare","topOverShare","sharedShare"].includes(k)) return fmtPct(v);
   if (["scrapAmt","overuseAmt","overuseAmtB"].includes(k)) return fmtCardMoneyWan(v);
   return fmtMoney(v);
 }
@@ -580,7 +596,7 @@ function metricLabel(k){
   if (k === "overuseAmtB") return overuseAmtBLabel();
   return {
     sales:"營業額", scrapAmt:"報廢額", scrapRate:"報廢率",
-    overuseRate:"多產率",
+    overuseNetRate:"超用率", overuseRate:"多產率",
     topScrapAmt:"廢棄前10名金額", topScrapShare:"廢棄前10名構成比",
     topOverAmt:"超用前10名金額", topOverShare:"超用前10名構成比",
     sharedAmt:"共用類廢棄金額", sharedShare:"共用類廢棄構成比"
@@ -593,7 +609,7 @@ function metricLabelForChart(k){
 }
 function displayMetricKeys(data=null){
   const postMay = isPostMayOveruseLayout(data);
-  return ["sales","scrapAmt","scrapRate","overuseAmt", ...(postMay ? ["overuseAmtB"] : []), "overuseRate"];
+  return ["sales","scrapAmt","scrapRate","overuseAmt", ...(postMay ? ["overuseAmtB"] : []), "overuseNetRate", "overuseRate"];
 }
 function syncOveruseMetricControls(data=null){
   const postMay = isPostMayOveruseLayout(data);
@@ -1797,6 +1813,7 @@ function summaryAgg(rows){
     sales, scrapAmt, overuseAmt, overuseAmtB, topScrapAmt, topOverAmt, sharedAmt,
     scrapRate: sales > 0 ? scrapAmt / sales : null,
     overuseRate: sales > 0 ? overuseAmt / sales : null,
+    overuseNetRate: sales > 0 ? overuseAmtB / sales : null,
     topScrapShare: scrapAmt > 0 ? topScrapAmt / scrapAmt : null,
     topOverShare: overuseAmt > 0 ? topOverAmt / overuseAmt : null,
     sharedShare: scrapAmt > 0 ? sharedAmt / scrapAmt : null
@@ -1914,7 +1931,7 @@ function renderTable(data){
     const j = data.jinxin.agg[k], d = data.daxi.agg[k];
     const diff = (d ?? 0) - (j ?? 0);
     const diffRate = (j && Number.isFinite(j) && j !== 0) ? diff / j : null;
-    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseAmtB","overuseRate","sharedShare"].includes(k);
+    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseAmtB","overuseNetRate","overuseRate","sharedShare"].includes(k);
     let judge = "—";
     if (Number.isFinite(diff)){
       if (Math.abs(diff) < 1e-9) judge = "兩廠接近";
@@ -2056,6 +2073,7 @@ function topRowQtyFromRate(row, qtyKey, rateKey){
 function completeTopMetrics(o){
   o.scrapRate = o.order > 0 ? o.scrapQty / o.order : null;
   o.overuseRate = o.order > 0 ? o.overuseQty / o.order : null;
+  o.overuseNetRate = (Number.isFinite(Number(o.overuseRate)) && Number.isFinite(Number(o.scrapRate))) ? Number(o.overuseRate) - Number(o.scrapRate) : null;
   o.overuseAmtA = Number(o.overuseAmt) || 0;
   o.overuseAmtB = (Number(o.overuseAmt) || 0) - (Number(o.scrapAmt) || 0);
   return o;
@@ -2083,7 +2101,8 @@ function aggregateTopBySemi(details, metric, classFilter="all"){
         scrapAmt: 0,
         overuseAmt: 0,
         scrapRate: null,
-        overuseRate: null
+        overuseRate: null,
+        overuseNetRate: null
       });
     }
 
@@ -2110,6 +2129,7 @@ function aggregateTopBySemi(details, metric, classFilter="all"){
       overuseAmt: o.overuseAmt,
       overuseAmtA: o.overuseAmtA,
       overuseAmtB: o.overuseAmtB,
+      overuseNetRate: o.overuseNetRate,
       scrapRate: o.scrapRate,
       overuseRate: o.overuseRate,
       exists: true
@@ -2136,7 +2156,8 @@ function aggregateTopByProductSemi(details, metric, classFilter="all"){
         scrapAmt: 0,
         overuseAmt: 0,
         scrapRate: null,
-        overuseRate: null
+        overuseRate: null,
+        overuseNetRate: null
       });
     }
 
@@ -2184,6 +2205,7 @@ function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
         overuseAmtA: null,
         overuseAmtB: null,
         overuseRate: null,
+        overuseNetRate: null,
         exists: false
       });
     }
@@ -2208,22 +2230,26 @@ function topMetricColumnLabel(metric){
     scrapRate: "報廢率",
     overuseAmt: metricLabel("overuseAmt"),
     overuseAmtB: metricLabel("overuseAmtB"),
+    overuseNetRate: "超用率",
     overuseRate: "多產率"
   }[metric] || "數值";
 }
 function formatTopValue(v, metric){
-  if (["scrapRate", "overuseRate"].includes(metric)) return fmtPct(v);
+  if (["scrapRate", "overuseNetRate", "overuseRate"].includes(metric)) return fmtPct(v);
   return formatTopMoney(v);
 }
 function topRateSideAmountMetric(metric){
   if (metric === "scrapRate") return "scrapAmt";
+  if (metric === "overuseNetRate") return "overuseAmtB";
   if (metric === "overuseRate") return "overuseAmt";
   return null;
 }
 function topRateSideAmountLabel(metric){
   const amountMetric = topRateSideAmountMetric(metric);
   if (!amountMetric) return "";
-  return amountMetric === "scrapAmt" ? "報廢金額" : "超用金額";
+  if (amountMetric === "scrapAmt") return "報廢金額";
+  if (amountMetric === "overuseAmtB") return "超用B金額";
+  return "超用金額";
 }
 
 function renderTopTables(data){
@@ -2819,7 +2845,7 @@ function renderTable(data){
     const a = slots[0].agg[k], b = slots[1].agg[k];
     const diff = (b ?? 0) - (a ?? 0);
     const diffRate = (a && Number.isFinite(a) && a !== 0) ? diff / a : null;
-    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseAmtB","overuseRate","sharedShare"].includes(k);
+    const higherBad = ["scrapAmt","scrapRate","overuseAmt","overuseAmtB","overuseNetRate","overuseRate","sharedShare"].includes(k);
     let judge = "—";
     if (Number.isFinite(diff)){
       if (Math.abs(diff) < 1e-9) judge = "兩廠接近";
@@ -2848,11 +2874,13 @@ function renderCharts(data){
     return {label:FACTORIES[x.slot.key].name, data:allKeys.map(k=>map.get(k) ?? null), borderColor:FACTORIES[x.slot.key].color, backgroundColor:FACTORIES[x.slot.key].color, tension:.25, spanGaps:true};
   });
   const legend = $("trendLegend");
-  if (legend) legend.innerHTML = data.slots.map(s => `<span><i class="factory-dot" style="background:${FACTORIES[s.key].color}"></i> ${FACTORIES[s.key].name}</span>`).join("");
+  if (legend) legend.innerHTML = "";
+  updateTrendDeltaToggleBtn();
 
   const trendDeltaLabelPlugin = {
     id: "trendDeltaLabelPlugin",
     afterDatasetsDraw(chart){
+      if (!state.showTrendDeltaLabels) return;
       const {ctx, chartArea} = chart;
       if (!chartArea) return;
       ctx.save();
@@ -2903,7 +2931,7 @@ function renderCharts(data){
 
   const postMay = isPostMayOveruseLayout(data);
   const amountMetrics = postMay ? ["scrapAmt", "overuseAmt", "overuseAmtB"] : ["scrapAmt", "overuseAmt"];
-  const rateMetrics = ["scrapRate", "overuseRate"];
+  const rateMetrics = ["scrapRate", "overuseNetRate", "overuseRate"];
   const barMetricByIndex = [...amountMetrics, ...rateMetrics];
   const barLabels = barMetricByIndex.map(metricLabel);
   const barSets = [];
@@ -2953,6 +2981,7 @@ function topMetricOptionsHTML(selectedMetric, postMay=false){
     ["scrapRate", "報廢率"],
     ["overuseAmt", metricLabel("overuseAmt")],
     ...(postMay ? [["overuseAmtB", metricLabel("overuseAmtB")]] : []),
+    ["overuseNetRate", "超用率"],
     ["overuseRate", "多產率"]
   ];
   return opts.map(([value, label]) => `<option value="${value}" ${value === selectedMetric ? "selected" : ""}>${label}</option>`).join("");
