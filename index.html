@@ -2235,31 +2235,121 @@ function getSemiOrderFromRows(rows){
   return order;
 }
 
-function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
-  const rowsBySemi = new Map(aggregateTopBySemi(details, metric, classFilter).map(r => [r.normSemi, r]));
-  const rows = [];
+function longestCommonSubstringLength(a, b){
+  const x = normalizeCommonSemiName(a);
+  const y = normalizeCommonSemiName(b);
+  if (!x || !y) return 0;
 
-  for (const item of order){
-    const r = rowsBySemi.get(item.normSemi);
-    if (r) {
-      rows.push(r);
-    } else {
-      rows.push({
-        product: "無該半成品",
-        semi: item.semiLabel,
-        scrapAmt: null,
-        scrapRate: null,
-        overuseAmt: null,
-        overuseAmtA: null,
-        overuseAmtB: null,
-        overuseRate: null,
-        overuseNetRate: null,
-        exists: false
-      });
+  // 只保留前一列，避免半成品名稱較長時占用過多記憶體。
+  let prev = new Array(y.length + 1).fill(0);
+  let best = 0;
+  for (let i = 1; i <= x.length; i++){
+    const curr = new Array(y.length + 1).fill(0);
+    for (let j = 1; j <= y.length; j++){
+      if (x[i - 1] === y[j - 1]) {
+        curr[j] = prev[j - 1] + 1;
+        if (curr[j] > best) best = curr[j];
+      }
+    }
+    prev = curr;
+  }
+  return best;
+}
+
+function commonCharacterCount(a, b){
+  const x = Array.from(normalizeCommonSemiName(a));
+  const y = Array.from(normalizeCommonSemiName(b));
+  if (!x.length || !y.length) return 0;
+  const counts = new Map();
+  for (const ch of y) counts.set(ch, (counts.get(ch) || 0) + 1);
+  let total = 0;
+  for (const ch of x){
+    const n = counts.get(ch) || 0;
+    if (n > 0){
+      total += 1;
+      counts.set(ch, n - 1);
+    }
+  }
+  return total;
+}
+
+function commonSemiMatchInfo(sourceName, targetName){
+  const source = normalizeCommonSemiName(sourceName);
+  const target = normalizeCommonSemiName(targetName);
+  if (!source || !target) return null;
+
+  const exact = source === target;
+  const consecutive = exact ? Math.max(source.length, target.length) : longestCommonSubstringLength(source, target);
+  // 共有商品至少要有連續 3 個相同字；完全相同則直接配對。
+  if (!exact && consecutive < 3) return null;
+
+  const commonChars = commonCharacterCount(source, target);
+  const similarity = commonChars / Math.max(source.length, target.length, 1);
+  return { exact, consecutive, commonChars, similarity };
+}
+
+function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
+  const targetRows = aggregateTopBySemi(details, metric, classFilter);
+  const assignments = new Map();
+  const usedTargetIndexes = new Set();
+
+  // 第一階段：名稱完全相同的半成品優先保留，避免被其他模糊名稱搶走。
+  for (let sourceIndex = 0; sourceIndex < (order || []).length; sourceIndex++){
+    const item = order[sourceIndex];
+    const targetIndex = targetRows.findIndex((row, idx) =>
+      !usedTargetIndexes.has(idx) && row.normSemi === item.normSemi
+    );
+    if (targetIndex >= 0){
+      assignments.set(sourceIndex, targetRows[targetIndex]);
+      usedTargetIndexes.add(targetIndex);
     }
   }
 
-  return rows;
+  // 第二階段：未完全相同者，以「連續相同字數」最多者優先配對；
+  // 若相同，再依全部共同字數與相似度排序。每個目標半成品只配對一次。
+  const candidates = [];
+  for (let sourceIndex = 0; sourceIndex < (order || []).length; sourceIndex++){
+    if (assignments.has(sourceIndex)) continue;
+    const item = order[sourceIndex];
+    for (let targetIndex = 0; targetIndex < targetRows.length; targetIndex++){
+      if (usedTargetIndexes.has(targetIndex)) continue;
+      const target = targetRows[targetIndex];
+      const match = commonSemiMatchInfo(item.normSemi, target.normSemi);
+      if (!match || match.exact) continue;
+      candidates.push({ sourceIndex, targetIndex, target, ...match });
+    }
+  }
+
+  candidates.sort((a, b) =>
+    b.consecutive - a.consecutive ||
+    b.commonChars - a.commonChars ||
+    b.similarity - a.similarity ||
+    a.sourceIndex - b.sourceIndex ||
+    a.targetIndex - b.targetIndex
+  );
+
+  for (const candidate of candidates){
+    if (assignments.has(candidate.sourceIndex) || usedTargetIndexes.has(candidate.targetIndex)) continue;
+    assignments.set(candidate.sourceIndex, candidate.target);
+    usedTargetIndexes.add(candidate.targetIndex);
+  }
+
+  return (order || []).map((item, sourceIndex) => {
+    const matched = assignments.get(sourceIndex);
+    if (matched) return matched;
+    return {
+      product: "無該半成品",
+      semi: item.semiLabel,
+      scrapAmt: null,
+      scrapRate: null,
+      overuseAmt: null,
+      overuseAmtA: null,
+      overuseAmtB: null,
+      overuseRate: null,
+      overuseNetRate: null,
+      exists: false
+    };
+  });
 }
 
 function syncCommonTopButtons(){
