@@ -1233,8 +1233,41 @@ function monthKeysBetween(startISO, endISO){
   return out;
 }
 
+function monthKeysFromFilePath(p, fallbackYear=null){
+  const out = new Set();
+  const s = safeStr(p);
+
+  // 先用檔名中完整的起迄日期判斷。跨月檔（例如 2026-0728-0803）
+  // 必須同時歸屬 2026-07 與 2026-08，否則月別週趨勢會只抓到半週。
+  const fullSpan = parseFileSpanFromName(s);
+  if (fullSpan){
+    for (const k of monthKeysBetween(toISO(fullSpan.start), toISO(fullSpan.end))) out.add(k);
+  }
+
+  // 部分 manifest 檔名只有 0728-0803，年份由目前選擇年度補上。
+  const y = fallbackYear || parseFileYearHint(s);
+  if (y){
+    const m = s.match(/(?:^|[^\d])(0[1-9]|1[0-2])(\d{2})\D+(0[1-9]|1[0-2])(\d{2})(?:[^\d]|$)/);
+    if (m){
+      const sm = Number(m[1]), sd = Number(m[2]), em = Number(m[3]), ed = Number(m[4]);
+      let ey = Number(y);
+      if (em < sm || (em === sm && ed < sd)) ey += 1;
+      const start = new Date(Number(y), sm - 1, sd);
+      const end = new Date(ey, em - 1, ed);
+      if (!isNaN(start) && !isNaN(end) && start <= end){
+        for (const k of monthKeysBetween(toISO(start), toISO(end))) out.add(k);
+      }
+    }
+  }
+
+  // 若無法解析起迄區間，保留原本單月份判斷。
+  const single = monthKeyFromFilePath(s, fallbackYear);
+  if (single) out.add(single);
+  return Array.from(out).sort();
+}
+
 function recentMonthKeysFromManifest(files, count=3){
-  const keys = Array.from(new Set((files||[]).map(monthKeyFromFilePath).filter(Boolean))).sort();
+  const keys = Array.from(new Set((files||[]).flatMap(p => monthKeysFromFilePath(p)))).sort();
   return keys.slice(Math.max(0, keys.length - count));
 }
 
@@ -1242,7 +1275,9 @@ function filesForMonthKeys(files, monthKeys){
   const set = new Set(monthKeys || []);
   const years = Array.from(new Set((monthKeys || []).map(k => safeStr(k).slice(0,4)).filter(y => /^20\d{2}$/.test(y))));
   const fallbackYear = years.length === 1 ? Number(years[0]) : null;
-  return (files || []).filter(p => set.has(monthKeyFromFilePath(p, fallbackYear)));
+
+  // 一份檔案可能橫跨兩個月份。只要檔案涵蓋月份與需求月份有交集就載入。
+  return (files || []).filter(p => monthKeysFromFilePath(p, fallbackYear).some(k => set.has(k)));
 }
 
 function isLikelyFactoryWorkbook(key, path){
@@ -2692,7 +2727,7 @@ async function loadAll(){
 function buildGlobalDatesFromManifest(){
   const monthKeys = [];
   const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
-  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).map(monthKeyFromFilePath).filter(Boolean));
+  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).flatMap(p => monthKeysFromFilePath(p)));
   const uniq = Array.from(new Set(monthKeys)).sort();
   if (uniq.length){
     state.dateMin = `${uniq[0]}-01`;
@@ -2750,7 +2785,9 @@ function buildSelectors(keep=null){
 
   const selectorKeys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
   for (const k of selectorKeys){
-    for (const p of (state.factories[k]?.files || [])) addMonthKey(monthKeyFromFilePath(p, keep?.year ? Number(keep.year) : null));
+    for (const p of (state.factories[k]?.files || [])) {
+      for (const mk of monthKeysFromFilePath(p, keep?.year ? Number(keep.year) : null)) addMonthKey(mk);
+    }
     for (const r of [...(state.factories[k]?.summary || []), ...(state.factories[k]?.details || [])]) if (r.date) addMonthKey(r.date.slice(0,7));
   }
   if (!years.size) {
