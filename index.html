@@ -378,11 +378,6 @@ const FACTORIES = {
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
-    // 大溪 repo 目前已存在 8/1~8/3 半成品檔，但 manifest.json 尚未列入。
-    // 月別趨勢要完整計算 07/28~08/03，因此先補入這份實際存在的來源檔。
-    extraFiles: [
-      "2026/08/115.08.01-03屏榮大溪半成品報廢管理表.xlsx"
-    ],
     wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
   },
   changjia: {
@@ -1238,41 +1233,8 @@ function monthKeysBetween(startISO, endISO){
   return out;
 }
 
-function monthKeysFromFilePath(p, fallbackYear=null){
-  const out = new Set();
-  const s = safeStr(p);
-
-  // 先用檔名中完整的起迄日期判斷。跨月檔（例如 2026-0728-0803）
-  // 必須同時歸屬 2026-07 與 2026-08，否則月別週趨勢會只抓到半週。
-  const fullSpan = parseFileSpanFromName(s);
-  if (fullSpan){
-    for (const k of monthKeysBetween(toISO(fullSpan.start), toISO(fullSpan.end))) out.add(k);
-  }
-
-  // 部分 manifest 檔名只有 0728-0803，年份由目前選擇年度補上。
-  const y = fallbackYear || parseFileYearHint(s);
-  if (y){
-    const m = s.match(/(?:^|[^\d])(0[1-9]|1[0-2])(\d{2})\D+(0[1-9]|1[0-2])(\d{2})(?:[^\d]|$)/);
-    if (m){
-      const sm = Number(m[1]), sd = Number(m[2]), em = Number(m[3]), ed = Number(m[4]);
-      let ey = Number(y);
-      if (em < sm || (em === sm && ed < sd)) ey += 1;
-      const start = new Date(Number(y), sm - 1, sd);
-      const end = new Date(ey, em - 1, ed);
-      if (!isNaN(start) && !isNaN(end) && start <= end){
-        for (const k of monthKeysBetween(toISO(start), toISO(end))) out.add(k);
-      }
-    }
-  }
-
-  // 若無法解析起迄區間，保留原本單月份判斷。
-  const single = monthKeyFromFilePath(s, fallbackYear);
-  if (single) out.add(single);
-  return Array.from(out).sort();
-}
-
 function recentMonthKeysFromManifest(files, count=3){
-  const keys = Array.from(new Set((files||[]).flatMap(p => monthKeysFromFilePath(p)))).sort();
+  const keys = Array.from(new Set((files||[]).map(monthKeyFromFilePath).filter(Boolean))).sort();
   return keys.slice(Math.max(0, keys.length - count));
 }
 
@@ -1280,9 +1242,7 @@ function filesForMonthKeys(files, monthKeys){
   const set = new Set(monthKeys || []);
   const years = Array.from(new Set((monthKeys || []).map(k => safeStr(k).slice(0,4)).filter(y => /^20\d{2}$/.test(y))));
   const fallbackYear = years.length === 1 ? Number(years[0]) : null;
-
-  // 一份檔案可能橫跨兩個月份。只要檔案涵蓋月份與需求月份有交集就載入。
-  return (files || []).filter(p => monthKeysFromFilePath(p, fallbackYear).some(k => set.has(k)));
+  return (files || []).filter(p => set.has(monthKeyFromFilePath(p, fallbackYear)));
 }
 
 function isLikelyFactoryWorkbook(key, path){
@@ -1577,11 +1537,7 @@ function setDataStatus(message, options={}){
 async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  // 某些來源檔已上傳到 repo，但 manifest 尚未同步列出。
-  // 將 extraFiles 與 manifest 合併，讓跨月週能抓到隔月資料。
-  const manifestFiles = Array.isArray(manifest.files) ? manifest.files : [];
-  const allFiles = Array.from(new Set([...manifestFiles, ...((f.extraFiles || []))]));
-  const files = allFiles.filter(p => isLikelyFactoryWorkbook(key, p));
+  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
   return {
     summary: [],
     details: [],
@@ -2229,7 +2185,7 @@ function aggregateTopBySemi(details, metric, classFilter="all"){
   });
 }
 
-function aggregateTopByProductSemi(details, metric, classFilter="all"){
+function aggregateTopByProductSemi(details, metric, classFilter="all", limit=10){
   const m = new Map();
 
   for (const r of details || []){
@@ -2261,10 +2217,11 @@ function aggregateTopByProductSemi(details, metric, classFilter="all"){
     o.overuseAmt += topRowNumber(r.overuseAmt);
   }
 
-  return Array.from(m.values())
+  const rows = Array.from(m.values())
     .map(completeTopMetrics)
-    .sort((a,b)=>(Number.isFinite(Number(b[metric])) ? Number(b[metric]) : -Infinity) - (Number.isFinite(Number(a[metric])) ? Number(a[metric]) : -Infinity))
-    .slice(0,10);
+    .sort((a,b)=>(Number.isFinite(Number(b[metric])) ? Number(b[metric]) : -Infinity) - (Number.isFinite(Number(a[metric])) ? Number(a[metric]) : -Infinity));
+
+  return Number.isFinite(limit) ? rows.slice(0, Math.max(0, limit)) : rows;
 }
 
 function getSemiOrderFromRows(rows){
@@ -2272,9 +2229,17 @@ function getSemiOrderFromRows(rows){
   const order = [];
   for (const r of rows || []){
     const normSemi = normalizeCommonSemiName(r.semi);
-    if (!normSemi || seen.has(normSemi)) continue;
-    seen.add(normSemi);
-    order.push({ normSemi, semiLabel: r.semi || normSemi });
+    const normProduct = normalizeCommonSemiName(r.product);
+    if (!normSemi || !normProduct) continue;
+    const pairKey = `${normProduct}||${normSemi}`;
+    if (seen.has(pairKey)) continue;
+    seen.add(pairKey);
+    order.push({
+      normSemi,
+      normProduct,
+      semiLabel: r.semi || normSemi,
+      productLabel: r.product || normProduct
+    });
   }
   return order;
 }
@@ -2317,57 +2282,80 @@ function commonCharacterCount(a, b){
   return total;
 }
 
-function commonSemiMatchInfo(sourceName, targetName){
-  const source = normalizeCommonSemiName(sourceName);
-  const target = normalizeCommonSemiName(targetName);
+function normalizeCommonMatchName(name){
+  return normalizeCommonSemiName(name)
+    // 配對時忽略括號、斜線、連字號等格式符號，避免像「(V)」本身就被誤判成 3 個相同字。
+    .replace(/[()（）\[\]【】{}<>〈〉《》「」『』\-—–_\/\\.,，。:：;；+]/g, "");
+}
+
+function commonNameMatchInfo(sourceName, targetName, minConsecutive=3){
+  const source = normalizeCommonMatchName(sourceName);
+  const target = normalizeCommonMatchName(targetName);
   if (!source || !target) return null;
 
   const exact = source === target;
-  const consecutive = exact ? Math.max(source.length, target.length) : longestCommonSubstringLength(source, target);
-  // 共有商品至少要有連續 3 個相同字；完全相同則直接配對。
-  if (!exact && consecutive < 3) return null;
+  const consecutive = exact ? Math.min(source.length, target.length) : longestCommonSubstringLength(source, target);
+  // 商品名與半成品名都必須至少有連續 3 個相同字，才視為可配對候選。
+  if (consecutive < minConsecutive) return null;
 
   const commonChars = commonCharacterCount(source, target);
   const similarity = commonChars / Math.max(source.length, target.length, 1);
   return { exact, consecutive, commonChars, similarity };
 }
 
+function commonSemiMatchInfo(sourceName, targetName){
+  return commonNameMatchInfo(sourceName, targetName, 3);
+}
+
+function commonProductMatchInfo(sourceName, targetName){
+  return commonNameMatchInfo(sourceName, targetName, 3);
+}
+
 function renderRowsBySemiOrder(details, metric, order, classFilter="all"){
-  const targetRows = aggregateTopBySemi(details, metric, classFilter);
+  // 共有配對必須同時符合：
+  // 1. 半成品名至少連續 3 個相同字；
+  // 2. 商品名至少連續 3 個相同字。
+  // 目標廠使用「商品名 + 半成品名」的完整組合搜尋，不只依半成品彙總，避免同半成品被錯配到別的商品。
+  const targetRows = aggregateTopByProductSemi(details, metric, classFilter, Infinity);
   const assignments = new Map();
   const usedTargetIndexes = new Set();
-
-  // 第一階段：名稱完全相同的半成品優先保留，避免被其他模糊名稱搶走。
-  for (let sourceIndex = 0; sourceIndex < (order || []).length; sourceIndex++){
-    const item = order[sourceIndex];
-    const targetIndex = targetRows.findIndex((row, idx) =>
-      !usedTargetIndexes.has(idx) && row.normSemi === item.normSemi
-    );
-    if (targetIndex >= 0){
-      assignments.set(sourceIndex, targetRows[targetIndex]);
-      usedTargetIndexes.add(targetIndex);
-    }
-  }
-
-  // 第二階段：未完全相同者，以「連續相同字數」最多者優先配對；
-  // 若相同，再依全部共同字數與相似度排序。每個目標半成品只配對一次。
   const candidates = [];
+
   for (let sourceIndex = 0; sourceIndex < (order || []).length; sourceIndex++){
-    if (assignments.has(sourceIndex)) continue;
     const item = order[sourceIndex];
     for (let targetIndex = 0; targetIndex < targetRows.length; targetIndex++){
-      if (usedTargetIndexes.has(targetIndex)) continue;
       const target = targetRows[targetIndex];
-      const match = commonSemiMatchInfo(item.normSemi, target.normSemi);
-      if (!match || match.exact) continue;
-      candidates.push({ sourceIndex, targetIndex, target, ...match });
+      const semiMatch = commonSemiMatchInfo(item.normSemi, target.semi);
+      if (!semiMatch) continue;
+
+      const productMatch = commonProductMatchInfo(item.normProduct, target.product);
+      if (!productMatch) continue;
+
+      candidates.push({
+        sourceIndex,
+        targetIndex,
+        target,
+        semiMatch,
+        productMatch,
+        exactBoth: semiMatch.exact && productMatch.exact,
+        totalConsecutive: semiMatch.consecutive + productMatch.consecutive,
+        totalCommonChars: semiMatch.commonChars + productMatch.commonChars,
+        totalSimilarity: semiMatch.similarity + productMatch.similarity
+      });
     }
   }
 
+  // 若有多個候選，同名商品+同名半成品優先；其後先看半成品符合字數，
+  // 再看商品名符合字數，最後以兩者總共同字數與相似度決定最適合的配對。
   candidates.sort((a, b) =>
-    b.consecutive - a.consecutive ||
-    b.commonChars - a.commonChars ||
-    b.similarity - a.similarity ||
+    Number(b.exactBoth) - Number(a.exactBoth) ||
+    Number(b.semiMatch.exact) - Number(a.semiMatch.exact) ||
+    Number(b.productMatch.exact) - Number(a.productMatch.exact) ||
+    b.semiMatch.consecutive - a.semiMatch.consecutive ||
+    b.productMatch.consecutive - a.productMatch.consecutive ||
+    b.totalCommonChars - a.totalCommonChars ||
+    b.totalConsecutive - a.totalConsecutive ||
+    b.totalSimilarity - a.totalSimilarity ||
     a.sourceIndex - b.sourceIndex ||
     a.targetIndex - b.targetIndex
   );
@@ -2639,11 +2627,7 @@ async function toggleFactorySelection(key){
 async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  // 某些來源檔已上傳到 repo，但 manifest 尚未同步列出。
-  // 將 factory 設定中的 extraFiles 與 manifest 合併，避免跨月週只算到本月月底。
-  const manifestFiles = Array.isArray(manifest.files) ? manifest.files : [];
-  const allFiles = Array.from(new Set([...manifestFiles, ...((f.extraFiles || []))]));
-  const files = allFiles.filter(p => isLikelyFactoryWorkbook(key, p));
+  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
   return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() };
 }
 
@@ -2740,7 +2724,7 @@ async function loadAll(){
 function buildGlobalDatesFromManifest(){
   const monthKeys = [];
   const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
-  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).flatMap(p => monthKeysFromFilePath(p)));
+  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).map(monthKeyFromFilePath).filter(Boolean));
   const uniq = Array.from(new Set(monthKeys)).sort();
   if (uniq.length){
     state.dateMin = `${uniq[0]}-01`;
@@ -2798,9 +2782,7 @@ function buildSelectors(keep=null){
 
   const selectorKeys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
   for (const k of selectorKeys){
-    for (const p of (state.factories[k]?.files || [])) {
-      for (const mk of monthKeysFromFilePath(p, keep?.year ? Number(keep.year) : null)) addMonthKey(mk);
-    }
+    for (const p of (state.factories[k]?.files || [])) addMonthKey(monthKeyFromFilePath(p, keep?.year ? Number(keep.year) : null));
     for (const r of [...(state.factories[k]?.summary || []), ...(state.factories[k]?.details || [])]) if (r.date) addMonthKey(r.date.slice(0,7));
   }
   if (!years.size) {
