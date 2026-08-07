@@ -378,6 +378,11 @@ const FACTORIES = {
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
+    // 大溪 repo 目前已存在 8/1~8/3 半成品檔，但 manifest.json 尚未列入。
+    // 月別趨勢要完整計算 07/28~08/03，因此先補入這份實際存在的來源檔。
+    extraFiles: [
+      "2026/08/115.08.01-03屏榮大溪半成品報廢管理表.xlsx"
+    ],
     wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
   },
   changjia: {
@@ -1572,7 +1577,11 @@ function setDataStatus(message, options={}){
 async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
+  // 某些來源檔已上傳到 repo，但 manifest 尚未同步列出。
+  // 將 extraFiles 與 manifest 合併，讓跨月週能抓到隔月資料。
+  const manifestFiles = Array.isArray(manifest.files) ? manifest.files : [];
+  const allFiles = Array.from(new Set([...manifestFiles, ...((f.extraFiles || []))]));
+  const files = allFiles.filter(p => isLikelyFactoryWorkbook(key, p));
   return {
     summary: [],
     details: [],
@@ -2630,7 +2639,11 @@ async function toggleFactorySelection(key){
 async function loadFactory(key){
   const f = FACTORIES[key];
   const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
+  // 某些來源檔已上傳到 repo，但 manifest 尚未同步列出。
+  // 將 factory 設定中的 extraFiles 與 manifest 合併，避免跨月週只算到本月月底。
+  const manifestFiles = Array.isArray(manifest.files) ? manifest.files : [];
+  const allFiles = Array.from(new Set([...manifestFiles, ...((f.extraFiles || []))]));
+  const files = allFiles.filter(p => isLikelyFactoryWorkbook(key, p));
   return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() };
 }
 
