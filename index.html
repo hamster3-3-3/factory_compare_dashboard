@@ -4014,7 +4014,7 @@ state.humanBackground = {active:false, done:0, total:0};
 state.humanDeferredRangeToken = 0;
 state.humanForegroundLoading = false;
 
-console.log("Human compare build: v7_changeover_match_factory_sites");
+console.log("Human compare build: v8_changeover_event_average_le20");
 
 const HUMAN_FACTORIES = {
   xinfeng: {
@@ -4206,8 +4206,8 @@ function humanChangeoverValueToMinutes(v){
   if (m) return Number(m[1]) * 60 + Number(m[2]) + Number(m[3] || 0) / 60;
   return NaN;
 }
-function humanParseChangeoverMinutes(grid){
-  // 與新豐／大溪單廠 Dashboard 同口徑：
+function humanParseChangeoverStats(grid){
+  // 換線 KPI 採「每次換線平均分鐘數」：只納入 0 < 分鐘 <= 20 的有效換線資料。
   // 可辨識「前置、換線時間/分」「換線時間/分」「換線/分」等版本。
   const coHdr = humanFindCell(grid, v => {
     const t = humanCleanText(v);
@@ -4215,7 +4215,7 @@ function humanParseChangeoverMinutes(grid){
       t.includes("時間") || t.includes("/分") || t.includes("／分") || t.includes("(分)") || t.includes("（分）")
     );
   }, 200, 80);
-  if (!coHdr) return 0;
+  if (!coHdr) return {total:0, count:0, avg:null};
 
   const restHdr = humanFindCell(grid, v => humanCleanText(v).includes("休息時間"), 200, 80);
   const coCol = coHdr.c;
@@ -4225,6 +4225,7 @@ function humanParseChangeoverMinutes(grid){
   if (restEndCol < 0 || restEndCol >= 200) restEndCol = 24;
 
   let total = 0;
+  let count = 0;
   for (let r=coHdr.r+1; r<(grid || []).length; r++){
     const row = grid[r] || [];
     const v = humanChangeoverValueToMinutes(row[coCol]);
@@ -4232,13 +4233,14 @@ function humanParseChangeoverMinutes(grid){
     const restStart = humanCleanText(row[restStartCol]);
     const restEnd = humanCleanText(row[restEndCol]);
     if (restStart || restEnd) continue; // 有休息時間者整筆排除
-    if (v > 20) continue;               // 單廠 Dashboard：只計 20 分鐘以內
+    if (v > 20) continue;               // 單筆換線只納入 20 分鐘以下
     total += v;
+    count += 1;
   }
-
-  // 單廠 Dashboard 的換線 KPI 是「當日合格換線分鐘合計」。
-  // 區間卡片再用期間天數取平均，得到「平均每日換線時間」。
-  return total;
+  return {total, count, avg: count ? (total / count) : null};
+}
+function humanParseChangeoverMinutes(grid){
+  return humanParseChangeoverStats(grid).avg;
 }
 function humanParseStopBlock(grid, title, fallbackCountCol, fallbackVal2Col, val2Header){
   const hit = humanFindCell(grid, v => humanCleanText(v) === title, 240, 80);
@@ -4401,7 +4403,7 @@ function humanHasFiniteValue(v){
 }
 function humanRowCompleteness(row){
   if (!row) return -1;
-  return ["totalQty","revenue","attendance","efficiency","avgPrice","multi","itemCount","changeoverMin","abCnt","abTime","shCnt","shEquip"]
+  return ["totalQty","revenue","attendance","efficiency","avgPrice","multi","itemCount","changeoverMin","changeoverCount","changeoverTotal","abCnt","abTime","shCnt","shEquip"]
     .reduce((score,k)=>score + (humanHasFiniteValue(row[k]) ? 1 : 0), 0);
 }
 function humanMergeDailyRow(a, b){
@@ -4409,7 +4411,7 @@ function humanMergeDailyRow(a, b){
   if (!b) return a;
   const preferB = humanRowCompleteness(b) >= humanRowCompleteness(a);
   const base = preferB ? Object.assign({}, a, b) : Object.assign({}, b, a);
-  for (const k of ["totalQty","revenue","attendance","efficiency","avgPrice","multi","itemCount","changeoverMin","abCnt","abTime","shCnt","shEquip"]){
+  for (const k of ["totalQty","revenue","attendance","efficiency","avgPrice","multi","itemCount","changeoverMin","changeoverCount","changeoverTotal","abCnt","abTime","shCnt","shEquip"]){
     if (!humanHasFiniteValue(base[k])) {
       if (humanHasFiniteValue(b[k])) base[k] = Number(b[k]);
       else if (humanHasFiniteValue(a[k])) base[k] = Number(a[k]);
@@ -4429,9 +4431,10 @@ function humanParseDetailGrid(grid, dateISO, temp="4"){
     : avgPriceFromSheet;
   const multi = humanFindLabelRightValue(grid, "多次生產數");
   const itemCount = humanParseItemCount(grid);
-  const changeoverMin = humanParseChangeoverMinutes(grid);
+  const changeover = humanParseChangeoverStats(grid);
+  const changeoverMin = changeover.avg;
   const primary = [totalQty,revenue,attendance,efficiency,avgPrice,multi];
-  if (!primary.some(Number.isFinite) && itemCount === 0 && changeoverMin === 0) return null;
+  if (!primary.some(Number.isFinite) && itemCount === 0 && !Number.isFinite(changeoverMin)) return null;
   return {
     date: dateISO,
     temp: String(temp || "4"),
@@ -4443,6 +4446,8 @@ function humanParseDetailGrid(grid, dateISO, temp="4"){
     multi: Number.isFinite(multi) ? multi : null,
     itemCount,
     changeoverMin,
+    changeoverCount: changeover.count,
+    changeoverTotal: changeover.total,
     abCnt:null,
     abTime:null,
     shCnt:null,
@@ -4485,6 +4490,8 @@ function humanParseSummaryGrid(grid, dateISO){
     multi:Number.isFinite(multi)?multi:null,
     itemCount:null,
     changeoverMin:null,
+    changeoverCount:null,
+    changeoverTotal:null,
     abCnt:stopline.abCnt,
     abTime:stopline.abTime,
     shCnt:stopline.shCnt,
@@ -5007,6 +5014,11 @@ function humanAggregateBucket(rows, metric, gran){
     const rev=revVals.reduce((sum,r)=>sum+Number(r.revenue),0);
     if (qty>0 && revVals.length) return rev/qty;
   }
+  if (metric === "changeoverMin"){
+    const total=valid.reduce((sum,r)=>sum+(humanHasFiniteValue(r.changeoverTotal)?Number(r.changeoverTotal):0),0);
+    const count=valid.reduce((sum,r)=>sum+(humanHasFiniteValue(r.changeoverCount)?Number(r.changeoverCount):0),0);
+    if (count>0) return total/count;
+  }
   return humanFiniteAvg(valid.map(r=>r[metric]));
 }
 function humanAggregateSeries(rows, metric, gran){
@@ -5063,7 +5075,7 @@ function humanCardMetricDefs(){
     {key:"efficiency", title:"人時性(平均)", type:"simple"},
     {key:"avgPrice", title:"平均廠價", type:"simple"},
     {key:"multi", title:"多次生產數(平均)", type:"simple"},
-    {key:"changeoverMin", title:"平均每日換線時間(分)", type:"simple"},
+    {key:"changeoverMin", title:"平均換線時間(分)", type:"simple"},
     {key:"abnormalStop", title:"異常停線(5min↑)", type:"compound", subItems:[{key:"abTime",label:"時間"},{key:"abCnt",label:"合計次數"}]},
     {key:"shortStop", title:"短暫停線(5min↓)", type:"compound", subItems:[{key:"shEquip",label:"設備次數"},{key:"shCnt",label:"合計次數"}]}
   ];
@@ -5085,7 +5097,7 @@ function humanAggregateCardStats(rows){
   if (!days) return null;
   let totalQty = 0, revenue = 0, multiSum = 0, itemCountSum = 0;
   let attSum = 0, attCnt = 0, effSum = 0, effCnt = 0, avgPriceFallbackSum = 0, avgPriceFallbackCnt = 0;
-  let changeoverSum = 0, abCnt = 0, abTime = 0, shCnt = 0, shEquip = 0;
+  let changeoverSum = 0, changeoverCount = 0, abCnt = 0, abTime = 0, shCnt = 0, shEquip = 0;
   for (const r of valid){
     if (humanHasFiniteValue(r.totalQty)) totalQty += Number(r.totalQty);
     if (humanHasFiniteValue(r.revenue)) revenue += Number(r.revenue);
@@ -5094,7 +5106,14 @@ function humanAggregateCardStats(rows){
     if (humanHasFiniteValue(r.attendance)){ attSum += Number(r.attendance); attCnt += 1; }
     if (humanHasFiniteValue(r.efficiency)){ effSum += Number(r.efficiency); effCnt += 1; }
     if (humanHasFiniteValue(r.avgPrice)){ avgPriceFallbackSum += Number(r.avgPrice); avgPriceFallbackCnt += 1; }
-    if (humanHasFiniteValue(r.changeoverMin)) changeoverSum += Number(r.changeoverMin);
+    if (humanHasFiniteValue(r.changeoverTotal) && humanHasFiniteValue(r.changeoverCount)) {
+      changeoverSum += Number(r.changeoverTotal);
+      changeoverCount += Number(r.changeoverCount);
+    } else if (humanHasFiniteValue(r.changeoverMin)) {
+      // 舊資料相容：若只有日平均值，視為 1 筆有效換線。
+      changeoverSum += Number(r.changeoverMin);
+      changeoverCount += 1;
+    }
     if (humanHasFiniteValue(r.abCnt)) abCnt += Number(r.abCnt);
     if (humanHasFiniteValue(r.abTime)) abTime += Number(r.abTime);
     if (humanHasFiniteValue(r.shCnt)) shCnt += Number(r.shCnt);
@@ -5108,7 +5127,7 @@ function humanAggregateCardStats(rows){
     avgPrice: totalQty > 0 && Number.isFinite(revenue) ? (revenue / totalQty) : (avgPriceFallbackCnt ? (avgPriceFallbackSum / avgPriceFallbackCnt) : null),
     multi: days ? (multiSum / days) : null,
     itemCount: days ? (itemCountSum / days) : null,
-    changeoverMin: days ? (changeoverSum / days) : null,
+    changeoverMin: changeoverCount ? (changeoverSum / changeoverCount) : null,
     abCnt,
     abTime,
     shCnt,
