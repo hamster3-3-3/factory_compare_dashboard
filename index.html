@@ -51,6 +51,23 @@
     }
     .seg-btn:hover{background:#f8fafc}
     .seg-btn.active{background:#0f172a;color:#fff;border-color:#0f172a}
+    .seg-btn:disabled,.seg-btn.is-disabled{background:#f1f5f9 !important;color:#94a3b8 !important;border-color:#e2e8f0 !important;cursor:not-allowed;opacity:.78}
+    .site-dropdown{position:relative;}
+    .site-dropdown > summary{list-style:none;cursor:pointer;}
+    .site-dropdown > summary::-webkit-details-marker{display:none;}
+    .site-dropdown-summary{display:inline-flex;align-items:center;gap:6px;}
+    .site-dropdown-summary .site-dropdown-arrow{font-size:10px;transition:transform .15s ease;}
+    .site-dropdown[open] .site-dropdown-summary .site-dropdown-arrow{transform:rotate(180deg);}
+    .site-dropdown-menu{
+      position:absolute;top:calc(100% + 6px);left:0;z-index:60;min-width:132px;
+      padding:6px;background:#fff;border:1px solid var(--line);border-radius:12px;
+      box-shadow:0 12px 28px rgba(15,23,42,.14);
+    }
+    .site-dropdown-menu button{
+      width:100%;text-align:left;padding:8px 10px;border-radius:8px;font-size:13px;
+      color:#0f172a;background:#fff;white-space:nowrap;
+    }
+    .site-dropdown-menu button:hover{background:#f1f5f9;}
     .chip{
       border:1px solid var(--line);
       border-radius:999px;
@@ -167,20 +184,62 @@
   <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
     <header class="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
       <div>
-        <div class="text-xs tracking-[0.24em] muted font-semibold">HALF-PRODUCT FACTORY COMPARISON</div>
-        <h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1">鮮食廠半成品對比 Dashboard</h1>
+        <div id="dashboardEyebrow" class="text-xs tracking-[0.24em] muted font-semibold">HALF-PRODUCT FACTORY COMPARISON</div>
+        <h1 id="dashboardTitle" class="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1">鮮食廠半成品對比 Dashboard</h1>
         
       </div>
       <div class="flex flex-wrap gap-2 items-center">
-        <button class="seg-btn" onclick="goSite('xinfeng')">新豐半成品</button>
-        <button class="seg-btn" onclick="goSite('jinxin')">晉欣半成品</button>
-        <button class="seg-btn" onclick="goSite('daxi')">大溪半成品</button>
-        <button class="seg-btn" onclick="goSite('changjia')">長家半成品</button>
+        <details class="site-dropdown">
+          <summary class="seg-btn site-dropdown-summary">新豐 <span class="site-dropdown-arrow">▼</span></summary>
+          <div class="site-dropdown-menu">
+            <button type="button" onclick="goFactorySite('xinfeng','half')">半成品</button>
+            <button type="button" onclick="goFactorySite('xinfeng','human')">人時性</button>
+          </div>
+        </details>
+        <details class="site-dropdown">
+          <summary class="seg-btn site-dropdown-summary">晉欣 <span class="site-dropdown-arrow">▼</span></summary>
+          <div class="site-dropdown-menu">
+            <button type="button" onclick="goFactorySite('jinxin','half')">半成品</button>
+            <button type="button" onclick="goFactorySite('jinxin','human')">人時性</button>
+          </div>
+        </details>
+        <details class="site-dropdown">
+          <summary class="seg-btn site-dropdown-summary">大溪 <span class="site-dropdown-arrow">▼</span></summary>
+          <div class="site-dropdown-menu">
+            <button type="button" onclick="goFactorySite('daxi','half')">半成品</button>
+            <button type="button" onclick="goFactorySite('daxi','human')">人時性</button>
+          </div>
+        </details>
+        <details class="site-dropdown">
+          <summary class="seg-btn site-dropdown-summary">長家 <span class="site-dropdown-arrow">▼</span></summary>
+          <div class="site-dropdown-menu">
+            <button type="button" onclick="goFactorySite('changjia','half')">半成品</button>
+            <button type="button" onclick="goFactorySite('changjia','human')">人時性</button>
+          </div>
+        </details>
         <button id="reloadBtn" class="seg-btn active">重新讀取資料</button>
       </div>
     </header>
 
-    <section class="mt-4 card p-4">
+    <section class="mt-4 card p-4" id="queryTypeCard">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="text-sm font-bold mr-1">查詢項目</div>
+        <button type="button" class="seg-btn active" data-query-type="half">半成品</button>
+        <button type="button" class="seg-btn" data-query-type="human">人時性</button>
+      </div>
+    </section>
+
+    <section class="mt-4 card p-4 hidden" id="humanTempCard">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="text-sm font-bold mr-1">選擇溫層</div>
+        <div class="flex flex-wrap items-center gap-2" id="humanTempWrap">
+          <button type="button" class="seg-btn active" data-human-temp="4">4°C</button>
+          <button type="button" class="seg-btn" data-human-temp="18">18°C</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="mt-4 card p-4" id="timeRangeCard">
       <div class="flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div class="flex flex-wrap items-center gap-2">
@@ -221,8 +280,8 @@
       <div class="flex flex-col gap-4">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div class="text-sm font-bold">選擇對比工廠及指標</div>
-            <div class="text-xs muted mt-1">最多選擇 4 個廠別進行同圖與區間比較</div>
+            <div id="factorySelectTitle" class="text-sm font-bold">選擇對比工廠及指標</div>
+            <div id="factorySelectSub" class="text-xs muted mt-1">最多選擇 4 個廠別進行同圖與區間比較</div>
           </div>
           <div id="factorySelectHint" class="chip">已選擇 0 / 4</div>
         </div>
@@ -243,7 +302,7 @@
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div class="text-sm font-bold">多廠 KPI 趨勢圖</div>
-            <div class="text-xs muted mt-1">同一指標，多廠同圖比較</div>
+            <div id="trendSubtext" class="text-xs muted mt-1">同一指標，多廠同圖比較</div>
           </div>
           <div class="flex flex-wrap items-end justify-end gap-3">
             <div class="min-w-[220px]">
@@ -282,7 +341,7 @@
       </div>
     </section>
 
-    <section class="mt-4 card p-4">
+    <section class="mt-4 card p-4" id="compareTableCard">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
           <div class="text-sm font-bold">KPI 對比明細表</div>
@@ -353,7 +412,7 @@
       </div>
     </section>
 
-    <p class="muted text-xs mt-4 leading-relaxed">
+    <p id="dataSourceNote" class="muted text-xs mt-4 leading-relaxed">
       資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
   </div>
@@ -366,6 +425,7 @@ const FACTORIES = {
   xinfeng: {
     name: "新豐",
     siteUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
+    humanSiteUrl: "https://hamster3-3-3.github.io/XiFang-dashboard/",
     baseUrl: "https://hamster3-3-3.github.io/XiFang-halfproduct/",
     color: "#2563eb",
     // 新豐部分月份會以「新豐廠生產管理報表」命名；
@@ -376,6 +436,7 @@ const FACTORIES = {
   daxi: {
     name: "大溪",
     siteUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
+    humanSiteUrl: "https://hamster3-3-3.github.io/Daxi-dashboard/",
     baseUrl: "https://hamster3-3-3.github.io/Daxi-halfproduct/",
     color: "#6b8e23",
     wastePattern: /(半成品報廢管理表|半成品生產管理(?:日報|報表)|生產管理報表).*\.xlsx$/i
@@ -383,6 +444,7 @@ const FACTORIES = {
   changjia: {
     name: "長家",
     siteUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
+    humanSiteUrl: "https://hamster3-3-3.github.io/ChangJia/",
     baseUrl: "https://hamster3-3-3.github.io/ChangJia-halfproduct/",
     color: "#a16207",
     // 長家的 manifest 檔名不一定只寫「半成品生產管理日報」，有些月份會用「生產管理報表」命名。
@@ -393,6 +455,7 @@ const FACTORIES = {
   jinxin: {
     name: "晉欣",
     siteUrl: "https://hamster3-3-3.github.io/jinxin-halfproduct/",
+    humanSiteUrl: "https://hamster3-3-3.github.io/jinxin-dashboard/",
     baseUrl: "https://hamster3-3-3.github.io/jinxin-halfproduct/",
     color: "#1f4e79",
     wastePattern: /(晉欣半成品報廢管理表|鮮食廠[_－-]?半成品生產管理日報|半成品報廢管理表|半成品生產管理日報).*\.xlsx$/i
@@ -420,7 +483,24 @@ const state = {
 
 const $ = id => document.getElementById(id);
 
-function goSite(key){ window.open(FACTORIES[key].siteUrl, "_blank", "noopener,noreferrer"); }
+function closeFactorySiteMenus(){
+  document.querySelectorAll('.site-dropdown[open]').forEach(el => el.removeAttribute('open'));
+}
+
+function goFactorySite(key, type='half'){
+  const factory = FACTORIES[key];
+  if (!factory) return;
+  const url = type === 'human' ? factory.humanSiteUrl : factory.siteUrl;
+  if (!url) return;
+  window.open(url, "_blank", "noopener,noreferrer");
+  closeFactorySiteMenus();
+}
+
+function goSite(key){ goFactorySite(key, 'half'); }
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.site-dropdown')) closeFactorySiteMenus();
+});
 
 function toast(msg){
   const el = $("toast");
@@ -1700,7 +1780,7 @@ function renderMonthOptions(){
   const months = state.monthsByYear[y] || [];
   $("monthSel").innerHTML = months.map(mm=>{
     const mNum = Number(mm);
-    const warning = y === "2026" && mNum >= 1 && mNum <= 4 ? "（長家資料未完整可能存在錯誤）" : "";
+    const warning = state.queryType !== "human" && y === "2026" && mNum >= 1 && mNum <= 4 ? "（長家資料未完整可能存在錯誤）" : "";
     return `<option value="${mm}">${mNum} 月${warning}</option>`;
   }).join("");
 }
@@ -2541,18 +2621,22 @@ function renderFactorySelector(){
   const wrap = $("factorySelectWrap");
   const hint = $("factorySelectHint");
   if (!wrap) return;
+  if (state.queryType === "human") enforceHumanTempFactoryAvailability();
   const selected = selectedFactoryKeys();
   wrap.innerHTML = allFactoryKeys().map(key => {
     const f = FACTORIES[key];
     const active = selected.includes(key);
-    return `<button type="button" class="seg-btn ${active ? "active" : ""}" data-factory-select="${key}">
-      <span class="factory-dot" style="background:${f.color};margin-right:6px"></span>${f.name}
+    const unavailable = state.queryType === "human" && !humanFactorySupportsTemp(key, state.humanTemp);
+    const disabledAttr = unavailable ? ` disabled aria-disabled="true" title="${f.name}僅提供 4°C 人時性資料"` : "";
+    const disabledClass = unavailable ? " is-disabled" : "";
+    return `<button type="button" class="seg-btn ${active ? "active" : ""}${disabledClass}" data-factory-select="${key}"${disabledAttr}>
+      <span class="factory-dot" style="background:${unavailable ? "#cbd5e1" : f.color};margin-right:6px"></span>${f.name}
     </button>`;
   }).join("");
-  wrap.querySelectorAll("[data-factory-select]").forEach(btn => {
+  wrap.querySelectorAll("[data-factory-select]:not(:disabled)").forEach(btn => {
     btn.addEventListener("click", () => toggleFactorySelection(btn.dataset.factorySelect));
   });
-  if (hint) hint.textContent = `已選擇 ${selected.length} / 4`;
+  if (hint) hint.textContent = `已選擇 ${selected.length} / ${state.queryType === "human" && state.humanTemp === "18" ? 2 : 4}`;
 }
 
 function captureTimeSelection(){
@@ -3911,11 +3995,1430 @@ function wireUI(){
   $("reloadBtn").addEventListener("click", loadAll);
 }
 
+
+
+/* ========================================================================
+   查詢項目擴充：半成品 / 人時性
+   - 人時性資料來源：四廠日報 Dashboard 的 manifest + Excel
+   - 先載近 3 個月，再於背景載入其餘月份
+   - 人時性模式目前只顯示「多廠 KPI 趨勢圖」
+   ======================================================================== */
+state.queryType = state.queryType || "half";
+state.halfMetricValue = state.halfMetricValue || "sales";
+state.humanMetricValue = state.humanMetricValue || "totalQty";
+state.humanTemp = state.humanTemp || "4";
+state.humanInitialized = false;
+state.humanInitPromise = null;
+state.humanBackgroundToken = 0;
+state.humanBackground = {active:false, done:0, total:0};
+state.humanDeferredRangeToken = 0;
+state.humanForegroundLoading = false;
+
+console.log("Human compare build: v7_changeover_match_factory_sites");
+
+const HUMAN_FACTORIES = {
+  xinfeng: {
+    name: "新豐",
+    baseUrl: "https://hamster3-3-3.github.io/XiFang-dashboard/",
+    manifestPath: "data/manifest.json",
+    color: FACTORIES.xinfeng.color
+  },
+  daxi: {
+    name: "大溪",
+    baseUrl: "https://hamster3-3-3.github.io/Daxi-dashboard/",
+    manifestPath: "data/manifest.json",
+    color: FACTORIES.daxi.color
+  },
+  changjia: {
+    name: "長家",
+    baseUrl: "https://hamster3-3-3.github.io/ChangJia/",
+    // 長家日報站實際使用的索引檔名
+    manifestPath: "data/manifest_changjia.json",
+    color: FACTORIES.changjia.color
+  },
+  jinxin: {
+    name: "晉欣",
+    baseUrl: "https://hamster3-3-3.github.io/jinxin-dashboard/",
+    manifestPath: "data/manifest.json",
+    color: FACTORIES.jinxin.color
+  }
+};
+
+function humanFactorySupportsTemp(key, temp=state.humanTemp){
+  const t = String(temp || "4");
+  if (t === "4") return true;
+  return ["daxi","jinxin"].includes(key);
+}
+function humanSelectableFactoryKeys(){
+  return allFactoryKeys().filter(key => state.queryType !== "human" || humanFactorySupportsTemp(key, state.humanTemp));
+}
+function syncHumanTempControls(){
+  const human = state.queryType === "human";
+  const card = $("humanTempCard");
+  if (card) card.classList.toggle("hidden", !human);
+  document.querySelectorAll("[data-human-temp]").forEach(btn => {
+    btn.classList.toggle("active", human && btn.dataset.humanTemp === String(state.humanTemp || "4"));
+  });
+}
+function enforceHumanTempFactoryAvailability(){
+  if (state.queryType !== "human") return;
+  const before = state.selectedFactoryKeys || [];
+  state.selectedFactoryKeys = before.filter(key => humanFactorySupportsTemp(key, state.humanTemp));
+}
+
+const HUMAN_METRICS = [
+  ["totalQty", "總生產量"],
+  ["revenue", "營業額"],
+  ["attendance", "出勤人數"],
+  ["efficiency", "人時性"],
+  ["avgPrice", "平均廠價"],
+  ["multi", "多次生產數"],
+  ["itemCount", "品項數"],
+  ["changeoverMin", "換線時間(分)"]
+];
+
+const HALF_METRIC_OPTIONS = [
+  ["sales", "營業額"],
+  ["scrapAmt", "報廢額"],
+  ["scrapRate", "報廢率"],
+  ["overuseAmt", "超用A(多產)"],
+  ["overuseAmtB", "超用B(多產-廢棄)", "postMay"],
+  ["overuseNetRate", "超用率"],
+  ["overuseRate", "多產率"]
+];
+
+function humanEmptyFactoryState(){
+  return { rows:[], files:[], errors:[], loadedFiles:new Set(), loadingFiles:new Set(), loadPromises:new Map() };
+}
+state.humanFactories = state.humanFactories || {};
+for (const key of allFactoryKeys()) {
+  if (!state.humanFactories[key]) state.humanFactories[key] = humanEmptyFactoryState();
+}
+
+function humanBaseName(path){ return safeStr(path).split(/[\\/]/).pop() || safeStr(path); }
+function humanPad2(v){ return String(Number(v)).padStart(2, "0"); }
+function humanCleanText(v){
+  return safeStr(v)
+    .replace(/\u00a0/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/\u3000/g, " ")
+    .replace(/\s+/g, "")
+    .trim();
+}
+function humanCleanKey(v){ return humanCleanText(v).toLowerCase(); }
+function humanToNumber(v){
+  if (v == null || v === "" || v instanceof Date) return NaN;
+  if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+  let s = safeStr(v).trim().replace(/[,，\s]+/g, "").replace(/[%％]/g, "");
+  s = s.replace(/[^0-9.+-]/g, "");
+  if (!s || s === "+" || s === "-" || s === ".") return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+}
+function humanSheetGrid(ws){
+  return XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:""});
+}
+// 人時性單廠 Dashboard 讀 Excel 時不使用 cellDates:true。
+// 總覽若沿用半成品共用的 fetchWorkbook(cellDates:true)，部分換線分鐘欄會被 SheetJS
+// 轉成 Date，造成新豐／大溪換線時間被判定為非數值而顯示 0。
+async function humanFetchWorkbook(url){
+  const r = await fetch(url, {cache:"no-store"});
+  if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
+  const ab = await r.arrayBuffer();
+  return XLSX.read(ab, {type:"array"});
+}
+function humanFindCell(grid, predicate, maxR=160, maxC=120){
+  const R = Math.min((grid || []).length, maxR);
+  for (let r=0; r<R; r++){
+    const row = grid[r] || [];
+    const C = Math.min(row.length, maxC);
+    for (let c=0; c<C; c++){
+      const v = row[c];
+      if (predicate(v, r, c)) return {r,c,v};
+    }
+  }
+  return null;
+}
+function humanFindLabelRightValue(grid, label){
+  const target = humanCleanText(label);
+  const hit = humanFindCell(grid, v => humanCleanText(v) === target, 35, 60);
+  if (!hit) return NaN;
+  const row = grid[hit.r] || [];
+  for (let c=hit.c+1; c<row.length && c<hit.c+10; c++){
+    const n = humanToNumber(row[c]);
+    if (Number.isFinite(n)) return n;
+  }
+  return NaN;
+}
+function humanFindHeaderRowIndex(grid){
+  for (let r=0; r<Math.min((grid || []).length, 140); r++){
+    const row = grid[r] || [];
+    if (humanCleanText(row[0]) === "線別" && row.some(v => humanCleanText(v).includes("品名"))) return r;
+  }
+  return -1;
+}
+function humanHeaderIndex(header, token){
+  const t = humanCleanText(token);
+  for (let i=0; i<(header || []).length; i++) if (humanCleanText(header[i]).includes(t)) return i;
+  return -1;
+}
+function humanParseItemCount(grid){
+  const hr = humanFindHeaderRowIndex(grid);
+  if (hr < 0) return 0;
+  const header = grid[hr] || [];
+  const idxLine = 0;
+  const idxCat = humanHeaderIndex(header, "品類");
+  const idxProd = humanHeaderIndex(header, "品名");
+  if (idxProd < 0) return 0;
+  let count = 0;
+  let blankStreak = 0;
+  let currentLine = "";
+  let currentCat = "";
+  for (let r=hr+1; r<(grid || []).length; r++){
+    const row = grid[r] || [];
+    const lineCell = humanCleanText(row[idxLine]);
+    if (lineCell){ currentLine = lineCell; currentCat = ""; }
+    const catCell = idxCat >= 0 ? humanCleanText(row[idxCat]) : "1";
+    if (catCell) currentCat = catCell;
+    const cat = idxCat >= 0 ? currentCat : "1";
+    const prod = humanCleanText(row[idxProd]);
+    if (!prod && !lineCell && !catCell) { if (++blankStreak > 35) break; continue; }
+    blankStreak = 0;
+    if (!currentLine || !cat || humanCleanKey(cat) === "0") continue;
+    if (!prod || /(平均|合計|小計|總計)/.test(prod)) continue;
+    count += 1;
+  }
+  return count;
+}
+function humanChangeoverValueToMinutes(v){
+  // 一般日報欄位是「分鐘數」；保留數值原樣。
+  const n = humanToNumber(v);
+  if (Number.isFinite(n)) return n;
+
+  // 若活頁簿或瀏覽器環境仍把時間型儲存格轉成 Date，取當日時間部分換算分鐘。
+  if (v instanceof Date && !isNaN(v)) {
+    return v.getHours() * 60 + v.getMinutes() + v.getSeconds() / 60;
+  }
+
+  // 相容 00:05、0:05:30 之類的文字時間。
+  const s = safeStr(v).trim();
+  const m = s.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}(?:\.\d+)?))?$/);
+  if (m) return Number(m[1]) * 60 + Number(m[2]) + Number(m[3] || 0) / 60;
+  return NaN;
+}
+function humanParseChangeoverMinutes(grid){
+  // 與新豐／大溪單廠 Dashboard 同口徑：
+  // 可辨識「前置、換線時間/分」「換線時間/分」「換線/分」等版本。
+  const coHdr = humanFindCell(grid, v => {
+    const t = humanCleanText(v);
+    return t.includes("換線") && (
+      t.includes("時間") || t.includes("/分") || t.includes("／分") || t.includes("(分)") || t.includes("（分）")
+    );
+  }, 200, 80);
+  if (!coHdr) return 0;
+
+  const restHdr = humanFindCell(grid, v => humanCleanText(v).includes("休息時間"), 200, 80);
+  const coCol = coHdr.c;
+  let restStartCol = restHdr ? restHdr.c : coCol + 2;
+  let restEndCol = restHdr ? restHdr.c + 1 : coCol + 3;
+  if (restStartCol < 0 || restStartCol >= 200) restStartCol = 23;
+  if (restEndCol < 0 || restEndCol >= 200) restEndCol = 24;
+
+  let total = 0;
+  for (let r=coHdr.r+1; r<(grid || []).length; r++){
+    const row = grid[r] || [];
+    const v = humanChangeoverValueToMinutes(row[coCol]);
+    if (!Number.isFinite(v) || v <= 0) continue;
+    const restStart = humanCleanText(row[restStartCol]);
+    const restEnd = humanCleanText(row[restEndCol]);
+    if (restStart || restEnd) continue; // 有休息時間者整筆排除
+    if (v > 20) continue;               // 單廠 Dashboard：只計 20 分鐘以內
+    total += v;
+  }
+
+  // 單廠 Dashboard 的換線 KPI 是「當日合格換線分鐘合計」。
+  // 區間卡片再用期間天數取平均，得到「平均每日換線時間」。
+  return total;
+}
+function humanParseStopBlock(grid, title, fallbackCountCol, fallbackVal2Col, val2Header){
+  const hit = humanFindCell(grid, v => humanCleanText(v) === title, 240, 80);
+  let cCnt = fallbackCountCol, cVal2 = fallbackVal2Col;
+  let rHead = -1;
+  const pickNearestCol = (cols, anchor) => {
+    if (!cols || !cols.length) return null;
+    let best = cols[0], bestD = Math.abs(cols[0] - anchor);
+    for (const c of cols){
+      const d = Math.abs(c - anchor);
+      if (d < bestD){ best = c; bestD = d; }
+    }
+    return best;
+  };
+  if (hit){
+    for (let r=hit.r; r<Math.min((grid || []).length, hit.r + 6); r++){
+      const row = grid[r] || [];
+      const cntCols = [];
+      const v2Cols = [];
+      for (let c=0; c<row.length; c++){
+        const t = humanCleanText(row[c]);
+        if (t === "合計次數") cntCols.push(c);
+        if (t === val2Header) v2Cols.push(c);
+      }
+      if (cntCols.length || v2Cols.length){
+        rHead = r;
+        const nearCnt = pickNearestCol(cntCols, hit.c);
+        const nearV2 = pickNearestCol(v2Cols, hit.c);
+        if (nearCnt !== null) cCnt = nearCnt;
+        if (nearV2 !== null) cVal2 = nearV2;
+        break;
+      }
+    }
+  } else {
+    rHead = -2;
+  }
+  let cnt = NaN, val2 = NaN;
+  if (rHead >= 0){
+    for (let r=rHead + 1; r<Math.min((grid || []).length, rHead + 6); r++){
+      const row = grid[r] || [];
+      const vCnt = humanToNumber(row[cCnt]);
+      const vVal2 = humanToNumber(row[cVal2]);
+      if (Number.isFinite(vCnt) || Number.isFinite(vVal2)){
+        if (Number.isFinite(vCnt)) cnt = vCnt;
+        if (Number.isFinite(vVal2)) val2 = vVal2;
+        break;
+      }
+    }
+  } else if (rHead === -2){
+    for (let r=0; r<Math.min((grid || []).length, 12); r++){
+      const row = grid[r] || [];
+      const vCnt = humanToNumber(row[cCnt]);
+      const vVal2 = humanToNumber(row[cVal2]);
+      if (Number.isFinite(vCnt) || Number.isFinite(vVal2)){
+        if (Number.isFinite(vCnt)) cnt = vCnt;
+        if (Number.isFinite(vVal2)) val2 = vVal2;
+        break;
+      }
+    }
+  }
+  return {cnt, val2};
+}
+function humanParseStoplineStats(grid){
+  const ab = humanParseStopBlock(grid, "異常停線", 13, 14, "時間");
+  const sh = humanParseStopBlock(grid, "短暫停線", 15, 16, "設備次數");
+  return {
+    abCnt: Number.isFinite(ab.cnt) ? ab.cnt : 0,
+    abTime: Number.isFinite(ab.val2) ? ab.val2 : 0,
+    shCnt: Number.isFinite(sh.cnt) ? sh.cnt : 0,
+    shEquip: Number.isFinite(sh.val2) ? sh.val2 : 0
+  };
+}
+
+function humanYearFromFile(path){
+  const name = humanBaseName(path);
+  let m = name.match(/^(1\d{2})(?=\D)/);
+  if (m) return 1911 + Number(m[1]);
+  m = name.match(/(20\d{2})/);
+  if (m) return Number(m[1]);
+  return currentYearFallback();
+}
+function humanMonthKeyFromFilePath(path, fallbackYear=null){
+  const s = safeStr(path);
+  const name = humanBaseName(s);
+  let m = name.match(/^(1\d{2})[.\/_-](0?[1-9]|1[0-2])[.\/_-]\d{1,2}/);
+  if (m) return `${1911 + Number(m[1])}-${humanPad2(m[2])}`;
+  // 長家：115長家生產日報表(0801-0806).xlsx
+  m = name.match(/^(1\d{2}).*?[（(]\s*(0[1-9]|1[0-2])\d{2}\s*[-~～至]/);
+  if (m) return `${1911 + Number(m[1])}-${m[2]}`;
+  // ROC 年 + 月日，沒有分隔符號
+  m = name.match(/^(1\d{2})\D*?(0[1-9]|1[0-2])\d{2}\D/);
+  if (m) return `${1911 + Number(m[1])}-${m[2]}`;
+  // Gregorian paths / names
+  m = s.match(/(?:^|[\\/_-])(20\d{2})[\\/_-](0?[1-9]|1[0-2])(?:[\\/_-]|月|$)/);
+  if (m) return `${m[1]}-${humanPad2(m[2])}`;
+  m = name.match(/(20\d{2})[.\/_-]?(0[1-9]|1[0-2])\d{2}/);
+  if (m) return `${m[1]}-${m[2]}`;
+  // Last fallback: existing parser may understand additional naming patterns.
+  const old = monthKeyFromFilePath(s, fallbackYear || humanYearFromFile(s));
+  return old || null;
+}
+function humanRecentMonthKeys(files, count=3){
+  const keys = Array.from(new Set((files || []).map(p => humanMonthKeyFromFilePath(p)).filter(Boolean))).sort();
+  return keys.slice(Math.max(0, keys.length - count));
+}
+function humanFilesForMonthKeys(files, monthKeys){
+  const set = new Set(monthKeys || []);
+  return (files || []).filter(p => set.has(humanMonthKeyFromFilePath(p)));
+}
+function humanIsWorkbook(path){
+  const name = humanBaseName(path);
+  if (!/\.(xlsx|xlsm|xls)$/i.test(name)) return false;
+  if (/^(~\$|\.)/.test(name)) return false;
+  if (/備份|backup|old|舊檔|測試/i.test(name)) return false;
+  return true;
+}
+function humanISOFromYearMMDD(year, mmdd){
+  const m = safeStr(mmdd).match(/^(\d{2})(\d{2})$/);
+  if (!m) return null;
+  const mo = Number(m[1]), d = Number(m[2]);
+  if (!(mo >= 1 && mo <= 12 && d >= 1 && d <= 31)) return null;
+  return toISO(new Date(Number(year), mo-1, d));
+}
+function humanDetailSheetInfo(factoryKey, sheetName){
+  const raw = safeStr(sheetName).trim();
+  const n = raw.replace(/\s+/g, "");
+  let m;
+
+  // 長家只有 4°C：新版明細分頁直接使用 MMDD，部分舊檔可能帶「長家4度C」。
+  if (factoryKey === "changjia") {
+    m = n.match(/^(\d{4})$/);
+    if (m) return {mmdd:m[1], temp:"4"};
+    m = n.match(/(?:長家)?4(?:度C|℃|°C)?(\d{4})/i);
+    if (m) return {mmdd:m[1], temp:"4"};
+    return null;
+  }
+
+  // 大溪：0630(4度C)、0630(18度C)
+  m = n.match(/^(\d{4})[（(].*?(18|4)(?:度C|℃|°C).*?[）)]$/i);
+  if (m && humanFactorySupportsTemp(factoryKey, m[2])) return {mmdd:m[1], temp:m[2]};
+
+  // 晉欣 / 新豐：晉欣4度C0630、晉欣18度C0630、新豐4度C0630 等
+  m = n.match(/(18|4)(?:度C|℃|°C).*?(\d{4})/i);
+  if (m && humanFactorySupportsTemp(factoryKey, m[1])) return {mmdd:m[2], temp:m[1]};
+  m = n.match(/(\d{4}).*?(18|4)(?:度C|℃|°C)/i);
+  if (m && humanFactorySupportsTemp(factoryKey, m[2])) return {mmdd:m[1], temp:m[2]};
+  return null;
+}
+function humanDetailMMDDFromSheet(factoryKey, sheetName, temp=state.humanTemp){
+  const info = humanDetailSheetInfo(factoryKey, sheetName);
+  return info && String(info.temp) === String(temp || "4") ? info.mmdd : null;
+}
+function humanFallbackDailyMMDD(sheetName){
+  const n = safeStr(sheetName).replace(/\s+/g, "");
+  const m = n.match(/^(\d{4})$/);
+  return m ? m[1] : null;
+}
+function humanHasFiniteValue(v){
+  return v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+}
+function humanRowCompleteness(row){
+  if (!row) return -1;
+  return ["totalQty","revenue","attendance","efficiency","avgPrice","multi","itemCount","changeoverMin","abCnt","abTime","shCnt","shEquip"]
+    .reduce((score,k)=>score + (humanHasFiniteValue(row[k]) ? 1 : 0), 0);
+}
+function humanMergeDailyRow(a, b){
+  if (!a) return b;
+  if (!b) return a;
+  const preferB = humanRowCompleteness(b) >= humanRowCompleteness(a);
+  const base = preferB ? Object.assign({}, a, b) : Object.assign({}, b, a);
+  for (const k of ["totalQty","revenue","attendance","efficiency","avgPrice","multi","itemCount","changeoverMin","abCnt","abTime","shCnt","shEquip"]){
+    if (!humanHasFiniteValue(base[k])) {
+      if (humanHasFiniteValue(b[k])) base[k] = Number(b[k]);
+      else if (humanHasFiniteValue(a[k])) base[k] = Number(a[k]);
+      else base[k] = null;
+    }
+  }
+  return base;
+}
+function humanParseDetailGrid(grid, dateISO, temp="4"){
+  const totalQty = humanFindLabelRightValue(grid, "總生產量");
+  const revenue = humanFindLabelRightValue(grid, "營業額");
+  const attendance = humanFindLabelRightValue(grid, "出勤人數");
+  const efficiency = humanFindLabelRightValue(grid, "人時性");
+  const avgPriceFromSheet = humanFindLabelRightValue(grid, "平均廠價");
+  const avgPrice = Number.isFinite(totalQty) && totalQty > 0 && Number.isFinite(revenue)
+    ? revenue / totalQty
+    : avgPriceFromSheet;
+  const multi = humanFindLabelRightValue(grid, "多次生產數");
+  const itemCount = humanParseItemCount(grid);
+  const changeoverMin = humanParseChangeoverMinutes(grid);
+  const primary = [totalQty,revenue,attendance,efficiency,avgPrice,multi];
+  if (!primary.some(Number.isFinite) && itemCount === 0 && changeoverMin === 0) return null;
+  return {
+    date: dateISO,
+    temp: String(temp || "4"),
+    totalQty: Number.isFinite(totalQty) ? totalQty : null,
+    revenue: Number.isFinite(revenue) ? revenue : null,
+    attendance: Number.isFinite(attendance) ? attendance : null,
+    efficiency: Number.isFinite(efficiency) ? efficiency : null,
+    avgPrice: Number.isFinite(avgPrice) ? avgPrice : null,
+    multi: Number.isFinite(multi) ? multi : null,
+    itemCount,
+    changeoverMin,
+    abCnt:null,
+    abTime:null,
+    shCnt:null,
+    shEquip:null
+  };
+}
+function humanFileMMDDRange(filePath){
+  const name = humanBaseName(filePath);
+  const m = name.match(/[（(]\s*(\d{4})\s*[-~～至]\s*(\d{4})\s*[)）]/);
+  if (!m) return null;
+  const a = Number(m[1]), b = Number(m[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return {start:Math.min(a,b), end:Math.max(a,b)};
+}
+function humanMMDDAllowed(mmdd, range){
+  if (!range) return true;
+  const n = Number(mmdd);
+  return Number.isFinite(n) ? n >= range.start && n <= range.end : true;
+}
+function humanParseSummaryGrid(grid, dateISO){
+  const totalQty = humanFindLabelRightValue(grid, "總生產量");
+  const revenue = humanFindLabelRightValue(grid, "營業額");
+  const attendance = humanFindLabelRightValue(grid, "出勤人數");
+  const efficiency = humanFindLabelRightValue(grid, "人時性");
+  const avgPriceFromSheet = humanFindLabelRightValue(grid, "平均廠價");
+  const avgPrice = Number.isFinite(totalQty) && totalQty > 0 && Number.isFinite(revenue)
+    ? revenue / totalQty
+    : avgPriceFromSheet;
+  const multi = humanFindLabelRightValue(grid, "多次生產數");
+  const stopline = humanParseStoplineStats(grid);
+  const vals = [totalQty,revenue,attendance,efficiency,avgPrice,multi];
+  if (!vals.some(Number.isFinite) && !Object.values(stopline).some(v => Number.isFinite(v))) return null;
+  return {
+    date:dateISO,
+    totalQty:Number.isFinite(totalQty)?totalQty:null,
+    revenue:Number.isFinite(revenue)?revenue:null,
+    attendance:Number.isFinite(attendance)?attendance:null,
+    efficiency:Number.isFinite(efficiency)?efficiency:null,
+    avgPrice:Number.isFinite(avgPrice)?avgPrice:null,
+    multi:Number.isFinite(multi)?multi:null,
+    itemCount:null,
+    changeoverMin:null,
+    abCnt:stopline.abCnt,
+    abTime:stopline.abTime,
+    shCnt:stopline.shCnt,
+    shEquip:stopline.shEquip
+  };
+}
+
+function humanParseWorkbook(wb, filePath, factoryKey){
+  const year = humanYearFromFile(filePath);
+  const allowedRange = humanFileMMDDRange(filePath);
+  const summaryByDate = new Map();
+  const detailByTempDate = new Map();
+  const matchedByTemp = {"4":0,"18":0};
+
+  // 日彙總：停線 KPI 的正式來源。長家是 MMDD總；其餘廠通常是純 MMDD。
+  for (const sname of wb.SheetNames || []){
+    const compact = safeStr(sname).replace(/\s+/g, "");
+    let mmdd = null;
+    if (factoryKey === "changjia") {
+      const m = compact.match(/^(\d{4})總$/);
+      if (m) mmdd = m[1];
+    } else {
+      const m = compact.match(/^(\d{4})$/);
+      if (m) mmdd = m[1];
+    }
+    if (!mmdd || !humanMMDDAllowed(mmdd, allowedRange)) continue;
+    const iso = humanISOFromYearMMDD(year, mmdd);
+    const ws = wb.Sheets[sname];
+    if (!iso || !ws) continue;
+    const row = humanParseSummaryGrid(humanSheetGrid(ws), iso);
+    if (row) summaryByDate.set(iso, humanMergeDailyRow(summaryByDate.get(iso), row));
+  }
+
+  // 溫層明細：大溪、晉欣同一活頁簿同時解析 4°C / 18°C；新豐、長家僅解析 4°C。
+  for (const sname of wb.SheetNames || []){
+    const info = humanDetailSheetInfo(factoryKey, sname);
+    if (!info || !humanMMDDAllowed(info.mmdd, allowedRange)) continue;
+    // 非長家的純 MMDD 是日彙總，不可當溫層明細。
+    if (factoryKey !== "changjia" && /^\s*\d{4}\s*$/.test(safeStr(sname))) continue;
+    const iso = humanISOFromYearMMDD(year, info.mmdd);
+    const ws = wb.Sheets[sname];
+    if (!iso || !ws) continue;
+    const row = humanParseDetailGrid(humanSheetGrid(ws), iso, info.temp);
+    if (!row) continue;
+    const k = `${info.temp}|${iso}`;
+    detailByTempDate.set(k, humanMergeDailyRow(detailByTempDate.get(k), row));
+    matchedByTemp[info.temp] = (matchedByTemp[info.temp] || 0) + 1;
+  }
+
+  // 新豐舊檔若沒有獨立 4°C 分頁，允許以純 MMDD 兼容；大溪/晉欣不可用此 fallback，
+  // 因為純 MMDD 是全日彙總，會污染 4°C / 18°C 的溫層數值。
+  if (factoryKey === "xinfeng" && !matchedByTemp["4"]) {
+    for (const sname of wb.SheetNames || []){
+      const mmdd = humanFallbackDailyMMDD(sname);
+      if (!mmdd || !humanMMDDAllowed(mmdd, allowedRange)) continue;
+      const iso = humanISOFromYearMMDD(year, mmdd);
+      const ws = wb.Sheets[sname];
+      const row = ws ? humanParseDetailGrid(humanSheetGrid(ws), iso, "4") : null;
+      if (row) detailByTempDate.set(`4|${iso}`, humanMergeDailyRow(detailByTempDate.get(`4|${iso}`), row));
+    }
+  }
+
+  const out = [];
+  for (const [key, detail] of detailByTempDate.entries()) {
+    const summary = summaryByDate.get(detail.date);
+    let row = Object.assign({}, detail);
+    if (summary) {
+      // 停線資料不分溫層，單廠 Dashboard 也是從日彙總共用；因此兩個溫層都帶入相同停線值。
+      for (const k of ["abCnt","abTime","shCnt","shEquip"]) {
+        if (humanHasFiniteValue(summary[k])) row[k] = Number(summary[k]);
+      }
+      // 新豐、長家只有 4°C，若溫層明細缺少主 KPI，可用日彙總補值。
+      if (["xinfeng","changjia"].includes(factoryKey)) {
+        for (const k of ["totalQty","revenue","attendance","efficiency","avgPrice","multi"]) {
+          if (!humanHasFiniteValue(row[k]) && humanHasFiniteValue(summary[k])) row[k] = Number(summary[k]);
+        }
+      }
+    }
+    out.push(row);
+  }
+
+  // 只有 4°C 的工廠若某日只有彙總、沒有可辨識的明細，仍保留該日 KPI。
+  if (["xinfeng","changjia"].includes(factoryKey)) {
+    for (const [iso, summary] of summaryByDate.entries()) {
+      if (detailByTempDate.has(`4|${iso}`)) continue;
+      out.push(Object.assign({}, summary, {temp:"4"}));
+    }
+  }
+
+  return out.sort((a,b)=>{
+    const d = safeStr(a.date).localeCompare(safeStr(b.date));
+    return d || safeStr(a.temp).localeCompare(safeStr(b.temp));
+  });
+}
+function humanDedupeRows(target){
+  const map = new Map();
+  for (const r of target.rows || []){
+    if (!r || !r.date) continue;
+    const temp = String(r.temp || "4");
+    const k = `${temp}|${r.date}`;
+    map.set(k, humanMergeDailyRow(map.get(k), Object.assign({}, r, {temp})));
+  }
+  target.rows = Array.from(map.values()).sort((a,b)=>{
+    const d = safeStr(a.date).localeCompare(safeStr(b.date));
+    return d || safeStr(a.temp).localeCompare(safeStr(b.temp));
+  });
+}
+
+async function humanListActualRepoWorkbooks(key){
+  // 長家單站之所以 5 月後仍可正常讀取，是因為它在 manifest 找不到/不一致時
+  // 會直接掃 GitHub Contents API。長家目前 repo 的 5~8 月實際檔名已改成：
+  //   長家生產日報表(0501-0531).xlsx ...
+  // 但 manifest_changjia.json 仍保留舊名：
+  //   115長家生產日報表(0501-0531).xlsx ...
+  // 因此總覽不能只信 manifest，需以 repo 實際存在的檔案為準。
+  if (key !== "changjia") return [];
+  const url = "https://api.github.com/repos/hamster3-3-3/ChangJia/contents/data?ref=main";
+  const res = await fetch(url, {
+    headers: {"Accept":"application/vnd.github+json"},
+    cache: "no-store"
+  });
+  if (!res.ok) throw new Error(`GitHub Contents HTTP ${res.status}`);
+  const data = await res.json();
+  if (!Array.isArray(data)) return [];
+  return data
+    .filter(it => it && it.type === "file" && typeof it.name === "string")
+    .map(it => it.name)
+    .filter(humanIsWorkbook);
+}
+
+async function ensureHumanFactoryIndex(key){
+  const cfg = HUMAN_FACTORIES[key];
+  if (!cfg) return;
+  const cur = state.humanFactories[key] || humanEmptyFactoryState();
+  if (Array.isArray(cur.files) && cur.files.length) return;
+
+  // 一般三廠仍依 manifest；長家則優先採 GitHub repo 實際檔案清單，
+  // 與長家單站目前能正常運作的 fallback 邏輯一致。
+  if (key === "changjia"){
+    try{
+      const actualFiles = await humanListActualRepoWorkbooks(key);
+      if (actualFiles.length){
+        state.humanFactories[key] = Object.assign(cur, {files:actualFiles});
+        return;
+      }
+    }catch(e){
+      console.warn("human changjia repo list failed; fallback to manifest", e);
+    }
+  }
+
+  const manifest = await fetchJSON(cfg.baseUrl + cfg.manifestPath);
+  const files = (manifest.files || []).filter(humanIsWorkbook);
+  state.humanFactories[key] = Object.assign(cur, {files});
+}
+async function humanLoadFactoryFiles(key, files, options={}){
+  const cfg = HUMAN_FACTORIES[key];
+  const target = state.humanFactories[key];
+  if (!cfg || !target) return;
+  target.loadedFiles = target.loadedFiles || new Set();
+  target.loadingFiles = target.loadingFiles || new Set();
+  target.loadPromises = target.loadPromises || new Map();
+  const unique = Array.from(new Set(files || [])).filter(Boolean);
+  const jobs = unique.map(path => {
+    if (target.loadedFiles.has(path)){
+      if (options.onFileDone) options.onFileDone(key, path, true);
+      return Promise.resolve({ok:true, skipped:true, file:path});
+    }
+    if (target.loadPromises.has(path)){
+      return target.loadPromises.get(path).then(res => {
+        if (options.onFileDone) options.onFileDone(key, path, res?.ok !== false);
+        return res;
+      });
+    }
+    target.loadingFiles.add(path);
+    const promise = (async()=>{
+      try{
+        let actualPath = path;
+        let wb;
+        try{
+          wb = await humanFetchWorkbook(cfg.baseUrl + "data/" + encodePath(actualPath));
+        }catch(firstErr){
+          // 長家 manifest_changjia.json 目前 5 月後仍是「115長家...」，
+          // 但 repo 實際檔名已移除 115。若 GitHub Contents API 暫時不可用而退回 manifest，
+          // 這裡再做一次實際檔名 fallback，避免 5 月後直接 404。
+          if (key === "changjia" && /^115長家生產日報表[（(]/.test(actualPath)){
+            const altPath = actualPath.replace(/^115/, "");
+            try{
+              wb = await humanFetchWorkbook(cfg.baseUrl + "data/" + encodePath(altPath));
+              actualPath = altPath;
+            }catch(_altErr){
+              throw firstErr;
+            }
+          }else{
+            throw firstErr;
+          }
+        }
+        target.rows.push(...humanParseWorkbook(wb, actualPath, key));
+        target.loadedFiles.add(path); // 仍以索引中的原 path 作 loaded key，避免重複載入
+        if (actualPath !== path) target.loadedFiles.add(actualPath);
+        if (options.onFileDone) options.onFileDone(key, path, true);
+        return {ok:true, file:path, actualFile:actualPath};
+      }catch(e){
+        console.warn("human", key, path, e);
+        target.errors.push(path);
+        if (options.onFileDone) options.onFileDone(key, path, false);
+        return {ok:false, file:path, error:e};
+      }finally{
+        target.loadingFiles.delete(path);
+        target.loadPromises.delete(path);
+      }
+    })();
+    target.loadPromises.set(path, promise);
+    return promise;
+  });
+  await Promise.all(jobs);
+  // 背景載入大量歷史月份時，不要每完成一份檔案就重掃該廠全部日期。
+  // 這個 O(n) 去重動作累積到後段會越來越重，是背景載入時頁面卡頓的主要來源之一。
+  // 前景查詢仍維持立即去重；背景批次則在最後一次性整理。
+  if (!options.deferDedupe) humanDedupeRows(target);
+}
+
+function humanAllManifestMonthKeys(keys=null){
+  const targetKeys = keys && keys.length ? keys : allFactoryKeys();
+  const out = [];
+  for (const key of targetKeys){
+    out.push(...(state.humanFactories[key]?.files || []).map(p=>humanMonthKeyFromFilePath(p)).filter(Boolean));
+  }
+  return Array.from(new Set(out)).sort();
+}
+function humanBuildGlobalDatesFromManifest(){
+  const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
+  const months = humanAllManifestMonthKeys(keys);
+  if (months.length){
+    state.dateMin = `${months[0]}-01`;
+    const [y,m] = months[months.length-1].split("-").map(Number);
+    state.dateMax = toISO(new Date(y,m,0));
+  }else{
+    const today = new Date();
+    state.dateMin = `${today.getFullYear()}-01-01`;
+    state.dateMax = toISO(today);
+  }
+}
+function humanBuildGlobalDatesFromLoadedOrManifest(){
+  // Selector availability is based on manifests, not only the already-loaded recent files.
+  humanBuildGlobalDatesFromManifest();
+}
+function humanBuildSelectors(keep=null){
+  keep = keep || captureTimeSelection();
+  humanBuildGlobalDatesFromManifest();
+  const years = new Set();
+  const monthsByYear = {};
+  const weeks = new Map();
+  const addMonth = mk => {
+    if (!mk || !/^20\d{2}-\d{2}$/.test(mk)) return;
+    const y=mk.slice(0,4), mm=mk.slice(5,7);
+    years.add(y);
+    monthsByYear[y] = monthsByYear[y] || new Set();
+    monthsByYear[y].add(mm);
+    const ms = new Date(Number(y),Number(mm)-1,1);
+    const me = new Date(Number(y),Number(mm),0);
+    let ws = weekStartTue(ms);
+    while (ws <= me){
+      const we = addDays(ws,6);
+      weeks.set(toISO(ws), {start:toISO(ws), end:toISO(we)});
+      ws = addDays(ws,7);
+    }
+  };
+  const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : humanSelectableFactoryKeys();
+  for (const key of keys){
+    for (const p of state.humanFactories[key]?.files || []) addMonth(humanMonthKeyFromFilePath(p));
+    for (const r of state.humanFactories[key]?.rows || []) if (r.date) addMonth(r.date.slice(0,7));
+  }
+  if (!years.size){
+    const y=String(new Date().getFullYear()), mm=humanPad2(new Date().getMonth()+1);
+    years.add(y); monthsByYear[y]=new Set([mm]); addMonth(`${y}-${mm}`);
+  }
+  state.years = Array.from(years).sort();
+  state.monthsByYear = {};
+  for (const [y,set] of Object.entries(monthsByYear)) state.monthsByYear[y]=Array.from(set).sort();
+  state.weeksAll = Array.from(weeks.values()).sort((a,b)=>safeStr(a.start).localeCompare(safeStr(b.start)));
+
+  const prevYear = keep?.year || ($("yearSel")?.value || "");
+  $("yearSel").innerHTML = state.years.map(y=>`<option value="${y}">${y}</option>`).join("");
+  const latestYear = (state.dateMax || toISO(new Date())).slice(0,4);
+  $("yearSel").value = state.years.includes(prevYear) ? prevYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1)||""));
+  renderMonthOptions();
+  const prevMonth = keep?.month || ($("monthSel")?.value || "");
+  const months = state.monthsByYear[$("yearSel").value] || [];
+  const latestMonth = (state.dateMax || "").slice(5,7);
+  $("monthSel").value = months.includes(prevMonth) ? prevMonth : (months.includes(latestMonth) ? latestMonth : (months.at(-1)||""));
+  renderWeekOptions();
+  const weekOptions = Array.from($("weekSel").options).map(o=>o.value);
+  if (keep?.weekStart && weekOptions.includes(keep.weekStart)) $("weekSel").value=keep.weekStart;
+  else {
+    const latestWeek = state.weeksAll.filter(w=>w.start<=state.dateMax && w.end>=state.dateMax).pop() || state.weeksAll.at(-1);
+    if (latestWeek && weekOptions.includes(latestWeek.start)) $("weekSel").value=latestWeek.start;
+  }
+  if ($("rangeStart")) $("rangeStart").value = keep?.rangeStart || $("rangeStart").value || state.dateMin;
+  if ($("rangeEnd")) $("rangeEnd").value = keep?.rangeEnd || $("rangeEnd").value || state.dateMax;
+  applyModeVisibility(keep?.mode || state.mode || "month");
+}
+function humanRenderMonthOptions(){
+  const y = $("yearSel").value;
+  const months = state.monthsByYear[y] || [];
+  $("monthSel").innerHTML = months.map(mm=>`<option value="${mm}">${Number(mm)} 月</option>`).join("");
+}
+
+function humanRecentLoadStatus(done,total,label){
+  const p = total>0 ? done/total*100 : 100;
+  setDataStatus(`人時性｜優先載入四廠近三個月資料中（${label || "近三個月"}） ${done}/${total} 份`, {progress:p, progressStyle:"circle"});
+}
+
+// 背景載入節流：只要使用者正在捲動、點擊、輸入或切換選項，就延後下一份大型 Excel 的解析。
+// 已經開始解析的單一活頁簿無法中途打斷，因此另外將背景併發固定為 1 份，避免兩份大檔同時阻塞主執行緒。
+state.humanLastUserActivity = state.humanLastUserActivity || 0;
+state.humanBackgroundDirtyFactories = state.humanBackgroundDirtyFactories || new Set();
+function humanMarkUserActivity(){
+  try{ state.humanLastUserActivity = performance.now(); }catch(_){ state.humanLastUserActivity = Date.now(); }
+}
+if (!state._humanActivityListenersInstalled){
+  state._humanActivityListenersInstalled = true;
+  ["pointerdown","wheel","touchstart","keydown"].forEach(type=>{
+    window.addEventListener(type, humanMarkUserActivity, {passive:true, capture:true});
+  });
+  document.addEventListener("change", humanMarkUserActivity, true);
+  document.addEventListener("input", humanMarkUserActivity, true);
+}
+function humanNowMs(){
+  try{return performance.now();}catch(_){return Date.now();}
+}
+function humanIsInputPending(){
+  try{
+    return !!(navigator.scheduling && typeof navigator.scheduling.isInputPending === "function" && navigator.scheduling.isInputPending({includeContinuous:true}));
+  }catch(_){ return false; }
+}
+function humanIdleOnce(timeout=700){
+  return new Promise(resolve=>{
+    if (typeof requestIdleCallback === "function"){
+      requestIdleCallback(()=>resolve(), {timeout});
+    }else{
+      setTimeout(resolve, 90);
+    }
+  });
+}
+async function humanWaitForBackgroundSlot(token){
+  // 讓操作事件後至少保留一小段空檔；如果正在做前景指定月份載入，也先讓前景完成。
+  while (token === state.humanBackgroundToken){
+    const since = humanNowMs() - Number(state.humanLastUserActivity || 0);
+    const busy = !!state.humanForegroundLoading || humanIsInputPending() || since < 220;
+    if (!busy) break;
+    await new Promise(resolve=>setTimeout(resolve, Math.max(70, 240 - Math.max(0, since))));
+  }
+  if (token !== state.humanBackgroundToken) return false;
+  await humanIdleOnce(850);
+  if (token !== state.humanBackgroundToken) return false;
+  // requestIdleCallback 因 timeout 被喚醒時，可能剛好又有新操作；再確認一次。
+  if (state.humanForegroundLoading || humanIsInputPending() || (humanNowMs() - Number(state.humanLastUserActivity || 0) < 150)){
+    return humanWaitForBackgroundSlot(token);
+  }
+  return true;
+}
+
+async function ensureHumanInitialized(force=false){
+  if (state.humanInitialized && !force) return;
+  if (state.humanInitPromise && !force) return state.humanInitPromise;
+  state.humanInitPromise = (async()=>{
+    await ensureLibs();
+    if (force){
+      state.humanBackgroundToken += 1;
+      state.humanDeferredRangeToken += 1;
+      state.humanFactories = {};
+      for (const key of allFactoryKeys()) state.humanFactories[key]=humanEmptyFactoryState();
+    }
+    setDataStatus("人時性｜讀取四廠資料索引中...", {loading:true});
+    const results = await Promise.allSettled(allFactoryKeys().map(key=>ensureHumanFactoryIndex(key)));
+    results.forEach((res,i)=>{
+      if (res.status === "rejected"){
+        const key=allFactoryKeys()[i];
+        console.error("human manifest", key, res.reason);
+        toast(`${HUMAN_FACTORIES[key].name}人時性資料索引讀取失敗。`);
+      }
+    });
+
+    // 改回原本方式：進入人時性後，四廠近 3 個月先全部載入完成。
+    humanBuildGlobalDatesFromManifest();
+    const plans = allFactoryKeys().map(key=>{
+      const keys=humanRecentMonthKeys(state.humanFactories[key]?.files || [],3);
+      return {key, keys, files:humanFilesForMonthKeys(state.humanFactories[key]?.files || [],keys)};
+    });
+    const label = Array.from(new Set(plans.flatMap(p=>p.keys))).sort().join("、");
+    const total = plans.reduce((s,p)=>s+p.files.length,0);
+    let done=0;
+    humanRecentLoadStatus(done,total,label);
+    await Promise.all(plans.map(p=>humanLoadFactoryFiles(p.key,p.files,{onFileDone:()=>{
+      done+=1;
+      humanRecentLoadStatus(done,total,label);
+    }})));
+
+    state.humanInitialized = true;
+    humanBuildGlobalDatesFromManifest();
+    humanBuildSelectors(captureTimeSelection());
+    setDataStatus(`人時性｜近三個月已載入：${allFactoryKeys().map(k=>`${HUMAN_FACTORIES[k].name} ${state.humanFactories[k].loadedFiles.size}/${state.humanFactories[k].files.length} 份`).join("；")}`);
+
+    // 近 3 個月顯示完成後，再恢復「其他所有月份自動背景載入」。
+    startHumanBackgroundLoad();
+  })();
+  try { await state.humanInitPromise; }
+  finally { state.humanInitPromise = null; }
+}
+function humanRemainingFiles(key){
+  const s=state.humanFactories[key] || humanEmptyFactoryState();
+  return (s.files || []).filter(p=>!s.loadedFiles.has(p));
+}
+function renderHumanBackgroundStatus(){
+  const bg=state.humanBackground || {done:0,total:0,active:false};
+  const p=bg.total ? bg.done/bg.total*100 : 100;
+  setDataStatus(bg.total && bg.done < bg.total ? `人時性｜其他月份背景載入中 ${Math.round(p)}%` : "人時性｜其他月份背景載入完成", {progress:p});
+}
+function startHumanBackgroundLoad(){
+  const token=++state.humanBackgroundToken;
+  const plan=[];
+  for (const key of allFactoryKeys()){
+    for (const file of humanRemainingFiles(key)) plan.push({key,file});
+  }
+  state.humanBackground={active:!!plan.length,done:0,total:plan.length};
+  state.humanBackgroundDirtyFactories = new Set();
+
+  if (!plan.length){
+    if (state.queryType === "human") setDataStatus("人時性｜四廠全部資料已載入完成", {progress:100});
+    return;
+  }
+  if (state.queryType === "human" && !state.humanForegroundLoading) renderHumanBackgroundStatus();
+
+  (async()=>{
+    // 背景只允許「一次一份」。下載可以非同步，但 XLSX.read / sheet_to_json 會佔用主執行緒，
+    // 因此每份開始前都先等到瀏覽器 idle，並避開使用者操作後的短時間窗。
+    for (const item of plan){
+      if (token !== state.humanBackgroundToken) return;
+      const canRun = await humanWaitForBackgroundSlot(token);
+      if (!canRun) return;
+
+      await humanLoadFactoryFiles(item.key,[item.file],{
+        deferDedupe:true,
+        onFileDone:()=>{
+          if (token !== state.humanBackgroundToken) return;
+          state.humanBackground.done += 1;
+          state.humanBackgroundDirtyFactories.add(item.key);
+          if (state.queryType === "human" && !state.humanForegroundLoading) renderHumanBackgroundStatus();
+        }
+      });
+
+      // 一份大檔解析完後先把控制權還給瀏覽器，讓滑動、下拉選單、Chart.js 重繪有機會先執行。
+      await new Promise(resolve=>setTimeout(resolve, 80));
+    }
+    if (token !== state.humanBackgroundToken) return;
+
+    // 背景期間不再每檔重掃全部歷史列；全部讀完後才逐廠一次去重。
+    for (const key of Array.from(state.humanBackgroundDirtyFactories || [])){
+      if (token !== state.humanBackgroundToken) return;
+      await humanWaitForBackgroundSlot(token);
+      humanDedupeRows(state.humanFactories[key]);
+      await new Promise(resolve=>setTimeout(resolve, 30));
+    }
+
+    if (token !== state.humanBackgroundToken) return;
+    state.humanBackground.active=false;
+    humanBuildSelectors(captureTimeSelection());
+    if (state.queryType === "human"){
+      setDataStatus("人時性｜其他月份背景載入完成", {progress:100});
+      if (selectedFactoryKeys().length) renderHumanTrend();
+    }
+  })().catch(e=>{
+    console.error("human background",e);
+    if (token !== state.humanBackgroundToken) return;
+    state.humanBackground.active=false;
+    if (state.queryType === "human") toast("人時性背景載入其他月份資料時發生錯誤，已保留目前資料。");
+  });
+}
+
+async function ensureHumanDataForCurrentRange(){
+  const selected=selectedFactoryKeys();
+  if (!selected.length) return;
+  await Promise.all(selected.map(k=>ensureHumanFactoryIndex(k)));
+  const monthKeys=getNeededMonthKeys();
+  if (!monthKeys.length) return;
+  const plans=selected.map(key=>({key,files:humanFilesForMonthKeys(state.humanFactories[key]?.files || [],monthKeys)}));
+  const total=plans.reduce((s,p)=>s+p.files.length,0);
+  let done=0;
+
+  // 前景查詢優先於背景。背景循環會在下一份檔案開始前等待此旗標清除。
+  state.humanForegroundLoading = true;
+  try{
+    if (total && !state.humanBackground?.active) setDataStatus("人時性｜選擇月份資料載入中", {progress:0});
+    await Promise.all(plans.map(p=>humanLoadFactoryFiles(p.key,p.files,{onFileDone:()=>{
+      done+=1;
+      if (!state.humanBackground?.active) setDataStatus("人時性｜選擇月份資料載入中", {progress:total?done/total*100:100});
+    }})));
+  }finally{
+    state.humanForegroundLoading = false;
+  }
+
+  if (state.humanBackground?.active) renderHumanBackgroundStatus();
+  else if (total) setDataStatus("人時性｜目前選擇月份資料已載入完成", {progress:100});
+}
+
+function humanMetricLabel(metric){
+  return (HUMAN_METRICS.find(x=>x[0]===metric)||[metric,metric])[1];
+}
+function humanFiniteAvg(values){
+  const arr=(values || []).filter(humanHasFiniteValue).map(Number);
+  return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : null;
+}
+function humanAggregateBucket(rows, metric, gran){
+  const valid=(rows || []).filter(Boolean);
+  // 原日報的年別平均廠價採「月營業額合計 ÷ 月生產量合計」；
+  // 月別/週別則沿用各日平均廠價再取平均，保持與四廠單站趨勢口徑一致。
+  if (metric === "avgPrice" && gran === "month"){
+    const qty=valid.reduce((sum,r)=>sum+(humanHasFiniteValue(r.totalQty)?Number(r.totalQty):0),0);
+    const revVals=valid.filter(r=>humanHasFiniteValue(r.revenue));
+    const rev=revVals.reduce((sum,r)=>sum+Number(r.revenue),0);
+    if (qty>0 && revVals.length) return rev/qty;
+  }
+  return humanFiniteAvg(valid.map(r=>r[metric]));
+}
+function humanAggregateSeries(rows, metric, gran){
+  const buckets=new Map();
+  for (const r of rows || []){
+    if (!r?.date) continue;
+    const k=bucketKey(r.date,gran);
+    if (!buckets.has(k)) buckets.set(k,[]);
+    buckets.get(k).push(r);
+  }
+  let keys=Array.from(buckets.keys()).sort();
+  if (gran === "month" && state.mode === "year"){
+    const y=$("yearSel")?.value;
+    if (y) keys=Array.from({length:12},(_,i)=>`${y}-${String(i+1).padStart(2,"0")}`);
+  }
+  const labels=keys.map(k=>{
+    if (gran === "month") return `${Number(k.slice(5,7))}月`;
+    if (gran === "week"){
+      const s=parseISO(k),e=addDays(s,6);
+      return `${fmtMMDD(s)}~${fmtMMDD(e)}`;
+    }
+    return k.slice(5);
+  });
+  const values=keys.map(k=>buckets.has(k)?humanAggregateBucket(buckets.get(k),metric,gran):null);
+  return {keys,labels,values};
+}
+function humanMetricFormat(metric,value){
+  const v=Number(value);
+  if (!Number.isFinite(v)) return "—";
+  if (metric === "revenue") return fmtSalesWan(v);
+  if (metric === "changeoverMin") return `${v.toLocaleString("zh-TW",{maximumFractionDigits:1})} 分`;
+  if (["attendance","efficiency","avgPrice","multi","itemCount"].includes(metric)) return v.toLocaleString("zh-TW",{maximumFractionDigits:2});
+  return Math.round(v).toLocaleString("zh-TW");
+}
+function humanMetricTick(metric,value){
+  const v=Number(value);
+  if (!Number.isFinite(v)) return "";
+  if (metric === "revenue") return `${Math.round(v/10000).toLocaleString("zh-TW")}萬`;
+  if (metric === "changeoverMin") return `${Number(v).toFixed(0)}分`;
+  if (["attendance","efficiency","avgPrice","multi","itemCount"].includes(metric)) return Number(v).toLocaleString("zh-TW",{maximumFractionDigits:1});
+  return Math.round(v).toLocaleString("zh-TW");
+}
+function humanRowsForRange(key, start, end){
+  const temp = String(state.humanTemp || "4");
+  return filterByRange(state.humanFactories[key]?.rows || [], start, end)
+    .filter(r => String(r?.temp || "4") === temp);
+}
+
+function humanCardMetricDefs(){
+  return [
+    {key:"totalQty", title:"總生產量", type:"simple"},
+    {key:"revenue", title:"營業額", type:"simple"},
+    {key:"attendance", title:"出勤人數(平均)", type:"simple"},
+    {key:"efficiency", title:"人時性(平均)", type:"simple"},
+    {key:"avgPrice", title:"平均廠價", type:"simple"},
+    {key:"multi", title:"多次生產數(平均)", type:"simple"},
+    {key:"changeoverMin", title:"平均每日換線時間(分)", type:"simple"},
+    {key:"abnormalStop", title:"異常停線(5min↑)", type:"compound", subItems:[{key:"abTime",label:"時間"},{key:"abCnt",label:"合計次數"}]},
+    {key:"shortStop", title:"短暫停線(5min↓)", type:"compound", subItems:[{key:"shEquip",label:"設備次數"},{key:"shCnt",label:"合計次數"}]}
+  ];
+}
+function humanFormatCardValue(metric, value){
+  const v = Number(value);
+  if (!Number.isFinite(v)) return "—";
+  if (metric === "revenue") return fmtSalesWan(v);
+  if (["attendance","efficiency","avgPrice"].includes(metric)) return v.toLocaleString("zh-TW", {maximumFractionDigits:2});
+  if (metric === "changeoverMin") return `${v.toLocaleString("zh-TW", {maximumFractionDigits:1})} 分`;
+  if (metric === "totalQty") return Math.round(v).toLocaleString("zh-TW");
+  if (["multi","itemCount","abCnt","shCnt","shEquip"].includes(metric)) return Math.round(v).toLocaleString("zh-TW");
+  if (metric === "abTime") return v.toLocaleString("zh-TW", {maximumFractionDigits:1});
+  return v.toLocaleString("zh-TW", {maximumFractionDigits:2});
+}
+function humanAggregateCardStats(rows){
+  const valid = (rows || []).filter(r => r && r.date);
+  const days = valid.length;
+  if (!days) return null;
+  let totalQty = 0, revenue = 0, multiSum = 0, itemCountSum = 0;
+  let attSum = 0, attCnt = 0, effSum = 0, effCnt = 0, avgPriceFallbackSum = 0, avgPriceFallbackCnt = 0;
+  let changeoverSum = 0, abCnt = 0, abTime = 0, shCnt = 0, shEquip = 0;
+  for (const r of valid){
+    if (humanHasFiniteValue(r.totalQty)) totalQty += Number(r.totalQty);
+    if (humanHasFiniteValue(r.revenue)) revenue += Number(r.revenue);
+    if (humanHasFiniteValue(r.multi)) multiSum += Number(r.multi);
+    if (humanHasFiniteValue(r.itemCount)) itemCountSum += Number(r.itemCount);
+    if (humanHasFiniteValue(r.attendance)){ attSum += Number(r.attendance); attCnt += 1; }
+    if (humanHasFiniteValue(r.efficiency)){ effSum += Number(r.efficiency); effCnt += 1; }
+    if (humanHasFiniteValue(r.avgPrice)){ avgPriceFallbackSum += Number(r.avgPrice); avgPriceFallbackCnt += 1; }
+    if (humanHasFiniteValue(r.changeoverMin)) changeoverSum += Number(r.changeoverMin);
+    if (humanHasFiniteValue(r.abCnt)) abCnt += Number(r.abCnt);
+    if (humanHasFiniteValue(r.abTime)) abTime += Number(r.abTime);
+    if (humanHasFiniteValue(r.shCnt)) shCnt += Number(r.shCnt);
+    if (humanHasFiniteValue(r.shEquip)) shEquip += Number(r.shEquip);
+  }
+  return {
+    totalQty,
+    revenue,
+    attendance: attCnt ? (attSum / attCnt) : null,
+    efficiency: effCnt ? (effSum / effCnt) : null,
+    avgPrice: totalQty > 0 && Number.isFinite(revenue) ? (revenue / totalQty) : (avgPriceFallbackCnt ? (avgPriceFallbackSum / avgPriceFallbackCnt) : null),
+    multi: days ? (multiSum / days) : null,
+    itemCount: days ? (itemCountSum / days) : null,
+    changeoverMin: days ? (changeoverSum / days) : null,
+    abCnt,
+    abTime,
+    shCnt,
+    shEquip,
+    days
+  };
+}
+function renderHumanCards(){
+  const wrap = $("kpiCards");
+  if (!wrap) return;
+  const keys = selectedFactoryKeys();
+  if (!keys.length){
+    wrap.innerHTML = "";
+    return;
+  }
+  wrap.className = keys.length >= 3
+    ? "mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"
+    : "mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3";
+  const range = getDateRange();
+  const slots = keys.map(key => {
+    const rows = humanRowsForRange(key, range.start, range.end);
+    return { key, agg: humanAggregateCardStats(rows) };
+  });
+  const metricDefs = humanCardMetricDefs();
+  wrap.innerHTML = metricDefs.map(def => {
+    const innerCols = slots.length >= 3 ? 2 : Math.max(1, slots.length);
+    const gridStyle = `grid-template-columns:repeat(${innerCols},minmax(0,1fr))`;
+    const values = slots.map(s => {
+      if (def.type === "compound"){
+        const subHtml = def.subItems.map(sub => {
+          const val = s.agg ? humanFormatCardValue(sub.key, s.agg[sub.key]) : "—";
+          return `<div class="flex items-baseline justify-between gap-3"><div class="kpi-sub">${sub.label}</div><div class="mono font-bold text-base" style="color:${HUMAN_FACTORIES[s.key].color}">${val}</div></div>`;
+        }).join("");
+        return `<div class="min-w-0"><div class="kpi-sub truncate mb-2">${HUMAN_FACTORIES[s.key].name}</div><div class="space-y-1">${subHtml}</div></div>`;
+      }
+      const val = s.agg ? humanFormatCardValue(def.key, s.agg[def.key]) : "—";
+      return `<div class="min-w-0"><div class="kpi-sub truncate">${HUMAN_FACTORIES[s.key].name}</div><div class="text-lg font-extrabold mono leading-tight break-words" style="color:${HUMAN_FACTORIES[s.key].color}">${val}</div></div>`;
+    }).join("");
+    let diffHtml = "";
+    if (slots.length === 2){
+      if (def.type === "compound"){
+        const diffs = def.subItems.map(sub => {
+          const a = slots[0].agg ? Number(slots[0].agg[sub.key]) : NaN;
+          const b = slots[1].agg ? Number(slots[1].agg[sub.key]) : NaN;
+          const diff = Number.isFinite(a) && Number.isFinite(b) ? (b - a) : NaN;
+          return `${sub.label}：${humanFormatCardValue(sub.key, diff)}`;
+        }).join("｜");
+        diffHtml = `<div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${diffs}</span></div>`;
+      } else {
+        const a = slots[0].agg ? Number(slots[0].agg[def.key]) : NaN;
+        const b = slots[1].agg ? Number(slots[1].agg[def.key]) : NaN;
+        const diff = Number.isFinite(a) && Number.isFinite(b) ? (b - a) : NaN;
+        diffHtml = `<div class="mt-3 kpi-sub">差異：<span class="mono font-bold">${humanFormatCardValue(def.key, diff)}</span></div>`;
+      }
+    }
+    return `<div class="card p-4"><div class="kpi-title">${def.title}</div><div class="mt-3 grid gap-x-4 gap-y-3" style="${gridStyle}">${values}</div>${diffHtml}</div>`;
+  }).join("");
+}
+
+function humanTrendDeltaPlugin(){
+  return {
+    id:"humanTrendDeltaLabelPlugin",
+    afterDatasetsDraw(chart){
+      if (!state.showTrendDeltaLabels) return;
+      const {ctx,chartArea}=chart;
+      if (!chartArea) return;
+      ctx.save();
+      chart.data.datasets.forEach((dataset,datasetIndex)=>{
+        const meta=chart.getDatasetMeta(datasetIndex);
+        if (!meta || meta.hidden) return;
+        const points=meta.data||[], values=dataset.data||[];
+        for (let i=1;i<points.length;i++){
+          const prev=Number(values[i-1]),curr=Number(values[i]);
+          if (!Number.isFinite(prev)||!Number.isFinite(curr)||prev===0||!points[i-1]||!points[i]) continue;
+          const ratio=(curr-prev)/prev;
+          const text=fmtChangePct(ratio);
+          const color=ratio>0?"#dc2626":(ratio<0?"#16a34a":"#64748b");
+          const p0=points[i-1],p1=points[i];
+          const midX=(p0.x+p1.x)/2,midY=(p0.y+p1.y)/2;
+          const dx=p1.x-p0.x,dy=p1.y-p0.y,len=Math.hypot(dx,dy)||1;
+          const nx=-dy/len,ny=dx/len,direction=datasetIndex%2===0?1:-1,dist=22+(datasetIndex%3)*5;
+          let x=midX+nx*dist*direction,y=midY+ny*dist*direction;
+          x=Math.max(chartArea.left+28,Math.min(chartArea.right-28,x));
+          y=Math.max(chartArea.top+16,Math.min(chartArea.bottom-12,y));
+          ctx.font="bold 11px 'Noto Sans TC', sans-serif";
+          ctx.fillStyle=color;ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(text,x,y);
+        }
+      });
+      ctx.restore();
+    }
+  };
+}
+function renderHumanTrend(){
+  renderHumanCards();
+  const metric=$("metricSel")?.value || state.humanMetricValue || "totalQty";
+  state.humanMetricValue=metric;
+  const range=getChartDateRange();
+  const gran=granularity(range.start,range.end);
+  const series=selectedFactoryKeys().map(key=>{
+    const rows=humanRowsForRange(key,range.start,range.end);
+    return {key,series:humanAggregateSeries(rows,metric,gran)};
+  });
+  const allKeys=Array.from(new Set(series.flatMap(x=>x.series.keys))).sort();
+  const labelMap=new Map(series.flatMap(x=>x.series.keys.map((k,i)=>[k,x.series.labels[i]])));
+  const labels=allKeys.map(k=>labelMap.get(k)||k);
+  const datasets=series.map(x=>{
+    const map=new Map(x.series.keys.map((k,i)=>[k,x.series.values[i]]));
+    return {label:HUMAN_FACTORIES[x.key].name,data:allKeys.map(k=>map.get(k)??null),borderColor:HUMAN_FACTORIES[x.key].color,backgroundColor:HUMAN_FACTORIES[x.key].color,tension:.25,spanGaps:true};
+  });
+  destroyChart("trend");
+  state.charts.trend=new Chart($("trendChart").getContext("2d"),{
+    type:"line",
+    data:{labels,datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,interaction:{mode:"index",intersect:false},
+      plugins:{legend:{display:true},tooltip:{callbacks:{label:c=>` ${c.dataset.label}｜${humanMetricLabel(metric)}：${humanMetricFormat(metric,c.parsed.y)}`}}},
+      scales:{y:{min:0,ticks:{callback:v=>humanMetricTick(metric,v)},title:{display:true,text:metric==="revenue"?"萬":(metric==="changeoverMin"?"分":humanMetricLabel(metric))}}}
+    },
+    plugins:[humanTrendDeltaPlugin()]
+  });
+  updateTrendDeltaToggleBtn();
+}
+function renderHumanEmpty(){
+  const wrap=$("kpiCards");
+  if (wrap) wrap.innerHTML="";
+  destroyChart("trend");
+  const ctx=$("trendChart")?.getContext("2d");
+  if (ctx && window.Chart){
+    state.charts.trend=new Chart(ctx,{type:"line",data:{labels:[],datasets:[]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:"請選擇 1～4 個工廠進行人時性比較"}},scales:{y:{beginAtZero:true}}}});
+  }
+}
+
+function setMetricOptionsForQuery(){
+  const sel=$("metricSel");
+  if (!sel) return;
+  if (state.queryType === "human"){
+    sel.innerHTML=HUMAN_METRICS.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+    sel.value=HUMAN_METRICS.some(x=>x[0]===state.humanMetricValue)?state.humanMetricValue:"totalQty";
+  }else{
+    sel.innerHTML=HALF_METRIC_OPTIONS.map(([v,l,flag])=>`<option value="${v}"${flag?` data-post-may-only="1"`:""}>${l}</option>`).join("");
+    sel.value=HALF_METRIC_OPTIONS.some(x=>x[0]===state.halfMetricValue)?state.halfMetricValue:"sales";
+    syncOveruseMetricControls();
+  }
+}
+function applyQueryTypeView(){
+  const human=state.queryType === "human";
+  document.querySelectorAll("[data-query-type]").forEach(btn=>btn.classList.toggle("active",btn.dataset.queryType===state.queryType));
+  syncHumanTempControls();
+  if (human) enforceHumanTempFactoryAvailability();
+  if ($("dashboardEyebrow")) $("dashboardEyebrow").textContent=human?"HUMAN PRODUCTIVITY FACTORY COMPARISON":"HALF-PRODUCT FACTORY COMPARISON";
+  if ($("dashboardTitle")) $("dashboardTitle").textContent=human?"鮮食廠人時性對比 Dashboard":"鮮食廠半成品對比 Dashboard";
+  if ($("factorySelectTitle")) $("factorySelectTitle").textContent=human?"選擇對比工廠及指標":"選擇對比工廠及指標";
+  if ($("factorySelectSub")) $("factorySelectSub").textContent=human?(state.humanTemp === "18" ? "18°C 僅支援大溪、晉欣；新豐與長家不可選取" : "4°C 可選擇最多 4 個廠別進行人時性同圖比較"):"最多選擇 4 個廠別進行同圖與區間比較";
+  if ($("trendSubtext")) $("trendSubtext").textContent=human?`${state.humanTemp}°C｜同一人時性指標，多廠同圖比較`:"同一指標，多廠同圖比較";
+  if ($("dataSourceNote")) $("dataSourceNote").innerHTML=human
+    ? `人時性資料來源：晉欣、大溪、新豐日報站的 <code>data/manifest.json</code>，長家日報站的 <code>data/manifest_changjia.json</code> 及其列出的 Excel；切換人時性時優先載入四廠近 3 個月資料，完成後自動於背景載入其餘月份；背景載入採單檔、閒置時解析與延後去重，降低操作期間卡頓。`
+    : `資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。`;
+  const halfOnly=["barCard","compareTableCard","topTablesGrid","dailyDetailCard"];
+  halfOnly.forEach(id=>{const el=$(id);if(el)el.classList.toggle("hidden",human);});
+  if (human) destroyChart("bar");
+  setMetricOptionsForQuery();
+}
+
+// Save the existing half-product implementation, then make shared UI functions query-aware.
+const _halfBuildGlobalDatesFromManifest = buildGlobalDatesFromManifest;
+const _halfBuildGlobalDatesFromLoadedOrManifest = buildGlobalDatesFromLoadedOrManifest;
+const _halfBuildSelectors = buildSelectors;
+const _halfRenderMonthOptions = renderMonthOptions;
+const _halfToggleFactorySelection = toggleFactorySelection;
+const _halfRenderAll = renderAll;
+const _halfLoadAll = loadAll;
+const _halfWireUI = wireUI;
+const _halfRenderBackgroundPreloadStatus = renderBackgroundPreloadStatus;
+
+renderBackgroundPreloadStatus = function(){
+  if (state.queryType === "human") {
+    if (state.humanBackground?.active) return renderHumanBackgroundStatus();
+    return;
+  }
+  return _halfRenderBackgroundPreloadStatus();
+};
+
+buildGlobalDatesFromManifest = function(){
+  return state.queryType === "human" ? humanBuildGlobalDatesFromManifest() : _halfBuildGlobalDatesFromManifest();
+};
+buildGlobalDatesFromLoadedOrManifest = function(){
+  return state.queryType === "human" ? humanBuildGlobalDatesFromLoadedOrManifest() : _halfBuildGlobalDatesFromLoadedOrManifest();
+};
+buildSelectors = function(keep=null){
+  return state.queryType === "human" ? humanBuildSelectors(keep) : _halfBuildSelectors(keep);
+};
+renderMonthOptions = function(){
+  return state.queryType === "human" ? humanRenderMonthOptions() : _halfRenderMonthOptions();
+};
+
+toggleFactorySelection = async function(key){
+  if (state.queryType !== "human") return _halfToggleFactorySelection(key);
+  if (!humanFactorySupportsTemp(key, state.humanTemp)) {
+    toast(`${HUMAN_FACTORIES[key]?.name || key}僅提供 4°C 人時性資料，18°C 無法選取。`);
+    renderFactorySelector();
+    return;
+  }
+  const keep=captureTimeSelection();
+  const selected=selectedFactoryKeys();
+  if (selected.includes(key)) state.selectedFactoryKeys=selected.filter(k=>k!==key);
+  else {
+    if (selected.length>=4){toast("最多只能選擇 4 個工廠做對比，請先取消其中一個工廠。");return;}
+    state.selectedFactoryKeys=[...selected,key];
+    try{await ensureHumanFactoryIndex(key);}catch(e){console.error(e);toast(`${HUMAN_FACTORIES[key].name}人時性資料索引讀取失敗。`);}
+  }
+  humanBuildSelectors(keep);
+  renderFactorySelector();
+  return renderAll();
+};
+
+renderAll = async function(){
+  if (state.queryType !== "human"){
+    state.halfMetricValue=$("metricSel")?.value || state.halfMetricValue || "sales";
+    return _halfRenderAll();
+  }
+  const currentHumanMetric = $("metricSel")?.value;
+  if (HUMAN_METRICS.some(x => x[0] === currentHumanMetric)) state.humanMetricValue = currentHumanMetric;
+  applyQueryTypeView();
+  await ensureHumanInitialized();
+  if (!selectedFactoryKeys().length){
+    renderHumanEmpty();
+    if (state.humanBackground?.active) renderHumanBackgroundStatus();
+    else setDataStatus("人時性｜資料索引已載入；請選擇 1～4 個工廠進行比較");
+    return;
+  }
+  await ensureHumanDataForCurrentRange();
+  renderHumanTrend();
+};
+
+loadAll = async function(){
+  if (state.queryType !== "human") return _halfLoadAll();
+  state.humanInitialized=false;
+  state.humanInitPromise=null;
+  state.humanBackgroundToken+=1;
+  state.humanFactories={};
+  for (const key of allFactoryKeys()) state.humanFactories[key]=humanEmptyFactoryState();
+  await ensureHumanInitialized(true);
+  humanBuildSelectors(captureTimeSelection());
+  renderFactorySelector();
+  return renderAll();
+};
+
+wireUI = function(){
+  _halfWireUI();
+  document.querySelectorAll("[data-query-type]").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const next=btn.dataset.queryType;
+      if (!next || next===state.queryType) return;
+      const keep=captureTimeSelection();
+      if (state.queryType === "half") state.halfMetricValue=$("metricSel")?.value || state.halfMetricValue;
+      else state.humanMetricValue=$("metricSel")?.value || state.humanMetricValue;
+      closeExpandedChart();
+      destroyChart("trend"); destroyChart("bar");
+      state.queryType=next;
+      applyQueryTypeView();
+      try{
+        if (next === "human"){
+          await ensureHumanInitialized();
+          humanBuildSelectors(keep);
+        }else{
+          _halfBuildGlobalDatesFromLoadedOrManifest();
+          _halfBuildSelectors(keep);
+        }
+        renderFactorySelector();
+        await renderAll();
+      }catch(e){
+        console.error(e);
+        toast(next === "human" ? "人時性資料載入或渲染失敗" : "半成品資料載入或渲染失敗");
+      }
+    });
+  });
+  document.querySelectorAll("[data-human-temp]").forEach(btn=>{
+    btn.addEventListener("click", async()=>{
+      if (state.queryType !== "human") return;
+      const next = btn.dataset.humanTemp;
+      if (!next || next === state.humanTemp) return;
+      const keep = captureTimeSelection();
+      state.humanTemp = next;
+      enforceHumanTempFactoryAvailability();
+      syncHumanTempControls();
+      humanBuildSelectors(keep);
+      renderFactorySelector();
+      applyQueryTypeView();
+      destroyChart("trend");
+      try {
+        await renderAll();
+      } catch(e) {
+        console.error(e);
+        toast(`${next}°C 人時性資料載入或渲染失敗`);
+      }
+    });
+  });
+  const metric=$("metricSel");
+  if (metric) metric.addEventListener("change",()=>{
+    if (state.queryType === "human") state.humanMetricValue=metric.value;
+    else state.halfMetricValue=metric.value;
+  });
+  applyQueryTypeView();
+};
+
 wireUI();
 loadAll().catch(e => {
   console.error(e);
   setDataStatus("資料讀取失敗");
-  toast("資料讀取失敗：請確認兩個原網站的 data/manifest.json 是否可公開讀取。");
+  toast("資料讀取失敗：請確認各廠資料站的 manifest 與 Excel 是否可公開讀取。");
 });
 </script>
 </body>
