@@ -1322,7 +1322,21 @@ function filesForMonthKeys(files, monthKeys){
   const set = new Set(monthKeys || []);
   const years = Array.from(new Set((monthKeys || []).map(k => safeStr(k).slice(0,4)).filter(y => /^20\d{2}$/.test(y))));
   const fallbackYear = years.length === 1 ? Number(years[0]) : null;
-  return (files || []).filter(p => set.has(monthKeyFromFilePath(p, fallbackYear)));
+
+  return (files || []).filter(p => {
+    // 一般情況：依檔名 / 路徑判定所屬月份。
+    const mk = monthKeyFromFilePath(p, fallbackYear);
+    if (mk && set.has(mk)) return true;
+
+    // 跨月保護：若檔名本身帶起迄日期，檔案區間只要和所需月份有交集就載入。
+    // 這可涵蓋 07/28~08/03 這類完整週，避免只因檔案被歸在起始月份而漏讀下一月資料。
+    const span = parseFileSpanFromName(p);
+    if (span){
+      const covered = monthKeysBetween(toISO(span.start), toISO(span.end));
+      if (covered.some(k => set.has(k))) return true;
+    }
+    return false;
+  });
 }
 
 function isLikelyFactoryWorkbook(key, path){
@@ -1335,18 +1349,27 @@ function isLikelyFactoryWorkbook(key, path){
   // 同時避免把一般「生產管理報表」誤當成半成品日報；長家原站只把半成品報廢/日報/管理表視為 KPI 來源。
   if (/JFM\s*指導/i.test(name) || /【\s*JFM\s*指導\s*】/i.test(name)) return false;
 
-  // KPI / 報廢 / 超用只能讀半成品檔案。若放寬到「生產管理報表」，會把 JFM/一般生管表讀進 summary，
-  // 同日期資料可能以 0 報廢/0 超用覆蓋真正的半成品管理表，長家 5 月就會出現這種現象。
+  // KPI / 報廢 / 超用優先讀半成品檔案。
   const halfProductPattern = /(半成品報廢管理表|半成品生產管理日報|半成品生產管理報表|半成品管理表).*\.(xlsx|xlsm|xls)$/i;
   if (halfProductPattern.test(name)) return true;
 
-  // 保留較彈性的保護：檔名必須同時含「半成品」與廠別關鍵字，不接受單純「生產管理報表」。
   const factoryNamePattern = {
     xinfeng: /(新豐|屏榮新豐|XiFang|Xifang)/i,
-    daxi: /(大溪|Daxi|大溪)/i,
+    daxi: /(大溪|Daxi)/i,
     changjia: /(長家|ChangJia)/i,
     jinxin: /(晉欣|jinxin|鮮食廠)/i
   }[key];
+
+  // 新豐、長家部分月份（尤其跨月週會碰到的下一個月份）實際檔名會使用
+  // 「新豐廠生產管理報表」「長家廠生產管理報表」等名稱，而不一定含「半成品」。
+  // 先前這裡把一般生產管理報表全部排除，造成例如 07/28~08/03 在月別趨勢中
+  // 只讀到 7 月資料，8/1~8/3 所在的 8 月檔案根本沒有進入 manifest 可讀清單。
+  // JFM 檔案已在上方明確排除，因此此處只對「檔名含正確廠別」的新豐/長家放寬。
+  if (["xinfeng","changjia"].includes(key) &&
+      factoryNamePattern && factoryNamePattern.test(name) &&
+      /生產管理(?:日報|報表)/i.test(name)) return true;
+
+  // 其他情況仍要求檔名含「半成品」，避免把無關報表混入 KPI。
   if (factoryNamePattern && factoryNamePattern.test(name) && /半成品/i.test(name)) return true;
 
   return false;
