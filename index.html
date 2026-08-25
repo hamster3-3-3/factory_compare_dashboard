@@ -4174,9 +4174,14 @@ function humanFindLabelRightValue(grid, label){
   return NaN;
 }
 function humanFindHeaderRowIndex(grid){
-  for (let r=0; r<Math.min((grid || []).length, 140); r++){
+  for (let r=0; r<Math.min((grid || []).length, 180); r++){
     const row = grid[r] || [];
-    if (humanCleanText(row[0]) === "線別" && row.some(v => humanCleanText(v).includes("品名"))) return r;
+    const hasLine = row.some(v => humanCleanText(v).includes("線別"));
+    const hasProd = row.some(v => {
+      const t = humanCleanText(v);
+      return t.includes("品名") || t.includes("商品名") || t.includes("商品名稱");
+    });
+    if (hasLine && hasProd) return r;
   }
   return -1;
 }
@@ -4185,14 +4190,26 @@ function humanHeaderIndex(header, token){
   for (let i=0; i<(header || []).length; i++) if (humanCleanText(header[i]).includes(t)) return i;
   return -1;
 }
+function humanHeaderIndicesExact(header, token){
+  const t = humanCleanText(token);
+  const exact = [];
+  const fallback = [];
+  for (let i=0; i<(header || []).length; i++){
+    const h = humanCleanText(header[i]);
+    if (!h) continue;
+    if (h === t) exact.push(i);
+    else if (h.includes(t) && !h.includes("達成")) fallback.push(i);
+  }
+  return exact.length ? exact : fallback;
+}
 function humanParseItemCount(grid){
   const hr = humanFindHeaderRowIndex(grid);
   if (hr < 0) return 0;
   const header = grid[hr] || [];
-  const idxLine = 0;
+  const idxLine = humanHeaderIndex(header, "線別");
   const idxCat = humanHeaderIndex(header, "品類");
-  const idxProd = humanHeaderIndex(header, "品名");
-  if (idxProd < 0) return 0;
+  const idxProd = humanPickHeaderIndex(header, ["品名", "商品名", "商品名稱", "名稱"]);
+  if (idxLine < 0 || idxProd < 0) return 0;
   let count = 0;
   let blankStreak = 0;
   let currentLine = "";
@@ -4232,89 +4249,70 @@ function humanPairTypeFromName(name){
   return /二配/.test(safeStr(name)) ? "二配" : "一配";
 }
 function humanParseDetailItemRows(grid, dateISO, temp="4"){
+  // 完全依單廠日報頁面的商品明細讀取方式：
+  // 生產量直接取「生產量」；若標準/實際欄重複，產能/時、人時性取第二組（實際），只有一組時取該組。
   const hr = humanFindHeaderRowIndex(grid);
   if (hr < 0) return [];
   const header = grid[hr] || [];
-  const idxLine = humanHeaderIndex(header, "線別") >= 0 ? humanHeaderIndex(header, "線別") : 0;
-  const idxGroup = (()=>{
-    const exact = humanPickHeaderIndex(header, ["品群", "品類", "群組", "類別"]);
-    return exact;
-  })();
-  const idxProd = humanPickHeaderIndex(header, ["品名", "商品名", "商品名稱", "名稱"]);
-  const idxLaunch = humanPickHeaderIndex(header, ["上市天數"]);
-  const idxQty = humanPickHeaderIndex(header, [
-    {test:t => t === "生產量" || t === "總生產量" || t === "產量" || t === "生產數量" || (t.includes("生產") && t.includes("量"))}
-  ]);
-  const idxCapacity = humanPickHeaderIndex(header, [
-    {test:t => t.includes("產能") && !t.includes("達成")}
-  ]);
-  const idxEff = humanPickHeaderIndex(header, [
-    {test:t => t.includes("人時性") && !t.includes("達成")}
-  ]);
-  const idxHumanAch = humanPickHeaderIndex(header, [
-    "人時達成率",
-    {test:t => t.includes("人時") && t.includes("達成")},
-    {test:t => t.includes("達成") && t.includes("人效")}
-  ]);
-  const idxCapAch = humanPickHeaderIndex(header, [
-    "產能達成率",
-    {test:t => t.includes("產能") && t.includes("達成")}
-  ]);
-  if (idxProd < 0) return [];
+  const idxLine = humanHeaderIndex(header, "線別");
+  const idxCat = humanHeaderIndex(header, "品類");
+  const idxProd = humanPickHeaderIndex(header, ["品名", "商品名", "商品名稱"]);
+  const idxQty = humanHeaderIndex(header, "生產量");
+  const capList = humanHeaderIndicesExact(header, "產能/時");
+  const effList = humanHeaderIndicesExact(header, "人時性");
+  const idxCap = capList.length >= 2 ? capList[1] : (capList[0] ?? -1);
+  const idxEff = effList.length >= 2 ? effList[1] : (effList[0] ?? -1);
+  if (idxLine < 0 || idxProd < 0) return [];
 
   const rows = [];
-  let blankStreak = 0;
   let currentLine = "";
-  let currentGroup = "";
+  let currentCat = "";
+  let blankStreak = 0;
   for (let r=hr+1; r<(grid || []).length; r++){
     const row = grid[r] || [];
-    const lineRaw = safeStr(row[idxLine]).trim();
-    const lineCell = humanCleanText(lineRaw);
-    if (lineCell){ currentLine = lineRaw || lineCell; currentGroup = ""; }
+    const lineCell = safeStr(row[idxLine]).trim();
+    if (humanCleanText(lineCell)) {
+      currentLine = lineCell;
+      currentCat = "";
+    }
 
-    const groupRaw = idxGroup >= 0 ? safeStr(row[idxGroup]).trim() : "";
-    const groupCell = idxGroup >= 0 ? humanCleanText(groupRaw) : "";
-    if (groupCell) currentGroup = groupRaw || groupCell;
+    const prod = safeStr(row[idxProd]).trim();
+    const prodClean = humanCleanText(prod);
+    const catCell = idxCat >= 0 ? safeStr(row[idxCat]).trim() : "";
+    const catClean = humanCleanText(catCell);
+    if (catClean && humanCleanKey(catCell) !== "0") currentCat = catCell;
 
-    const prodRaw = safeStr(row[idxProd]).trim();
-    const prodCell = humanCleanText(prodRaw);
-    if (!prodCell && !lineCell && !groupCell) { if (++blankStreak > 35) break; continue; }
+    if (!prodClean && !humanCleanText(lineCell) && !catClean) {
+      if (++blankStreak > 35) break;
+      continue;
+    }
     blankStreak = 0;
+    if (!currentLine || !prodClean) continue;
+    if (/(平均|合計|小計|總計)/.test(prodClean)) continue;
+    if (idxCat >= 0 && (!currentCat || humanCleanKey(currentCat) === "0")) continue;
 
-    if (!currentLine || !prodCell) continue;
-    if (/(平均|合計|小計|總計)/.test(prodCell)) continue;
-    if (idxGroup >= 0 && (!currentGroup || humanCleanKey(currentGroup) === "0")) continue;
-
-    const line = safeStr(currentLine).trim() || currentLine;
-    const group = safeStr(currentGroup).trim() || currentGroup || "未分類";
-    const launchDays = idxLaunch >= 0 ? humanToNumber(row[idxLaunch]) : NaN;
-    const totalQty = idxQty >= 0 ? humanToNumber(row[idxQty]) : NaN;
-    const capacity = idxCapacity >= 0 ? humanToNumber(row[idxCapacity]) : NaN;
-    const efficiency = idxEff >= 0 ? humanToNumber(row[idxEff]) : NaN;
-    const humanAchRate = idxHumanAch >= 0 ? normalizeExcelRate(row[idxHumanAch]) : NaN;
-    const capacityAchRate = idxCapAch >= 0 ? normalizeExcelRate(row[idxCapAch]) : NaN;
+    const qty = idxQty >= 0 ? humanToNumber(row[idxQty]) : NaN;
+    const cap = idxCap >= 0 ? humanToNumber(row[idxCap]) : NaN;
+    const eff = idxEff >= 0 ? humanToNumber(row[idxEff]) : NaN;
 
     rows.push({
       date: dateISO,
       temp: String(temp || "4"),
-      line,
-      group,
-      product: prodRaw,
-      pairType: humanPairTypeFromName(prodRaw),
-      launchDays: Number.isFinite(launchDays) ? launchDays : null,
-      totalQty: Number.isFinite(totalQty) ? totalQty : null,
-      capacity: Number.isFinite(capacity) ? capacity : null,
-      efficiency: Number.isFinite(efficiency) ? efficiency : null,
-      humanAchRate: Number.isFinite(humanAchRate) ? humanAchRate : null,
-      capacityAchRate: Number.isFinite(capacityAchRate) ? capacityAchRate : null
+      line: currentLine,
+      group: currentCat || "未分類",
+      product: prod,
+      pairType: humanPairTypeFromName(prod),
+      totalQty: Number.isFinite(qty) ? qty : null,
+      capacity: Number.isFinite(cap) ? cap : null,
+      efficiency: Number.isFinite(eff) ? eff : null
     });
   }
   return rows;
 }
 function humanItemRowCompleteness(row){
   if (!row) return -1;
-  return ["line","group","product","launchDays","totalQty","capacity","efficiency","humanAchRate","capacityAchRate"]
-    .reduce((score,k)=> score + ((row[k] !== null && row[k] !== undefined && row[k] !== "" && (!Number.isNaN(Number(row[k])) || typeof row[k] === "string")) ? 1 : 0), 0);
+  return ["line","group","product","totalQty","capacity","efficiency"]
+    .reduce((score,k)=> score + (row[k] !== null && row[k] !== undefined && row[k] !== "" ? 1 : 0), 0);
 }
 function humanMergeItemRow(a, b){
   if (!a) return b;
@@ -4324,7 +4322,7 @@ function humanMergeItemRow(a, b){
   for (const k of ["line","group","product","pairType"]){
     if (!base[k]) base[k] = b[k] || a[k] || "";
   }
-  for (const k of ["launchDays","totalQty","capacity","efficiency","humanAchRate","capacityAchRate"]){
+  for (const k of ["totalQty","capacity","efficiency"]){
     if (!humanHasFiniteValue(base[k])) {
       if (humanHasFiniteValue(b[k])) base[k] = Number(b[k]);
       else if (humanHasFiniteValue(a[k])) base[k] = Number(a[k]);
@@ -5529,23 +5527,22 @@ function renderHumanCompareTable(){
 }
 
 const HUMAN_ITEM_TABLE_OPTIONS = [
-  {value:"humanAchTop", label:"最高人時達成率（前六）", header:"人時達成率", limit:6},
-  {value:"humanAchLow", label:"最低人時達成率（前六）", header:"人時達成率", limit:6},
-  {value:"capAchLow", label:"最低產能達成率（前六）", header:"產能達成率", limit:6},
-  {value:"qtyDown", label:"生產量下滑數（高→低）", header:"生產量下滑數", limit:10},
-  {value:"capDown", label:"產能下滑數（高→低）", header:"產能下滑數", limit:10},
-  {value:"effDown", label:"人時性下滑數(平均)（高→低）", header:"人時性下滑數(平均)", limit:10},
-  {value:"qtyUp", label:"生產量上升數（高→低）", header:"生產量上升數", limit:10},
-  {value:"capUp", label:"產能上升數（高→低）", header:"產能上升數", limit:10},
-  {value:"effUp", label:"人時性上升數(平均)（高→低）", header:"人時性上升數(平均)", limit:10}
+  {value:"qtyDown", label:"生產量下滑數（高→低）", header:"生產量下滑數", metric:"qty", direction:"down"},
+  {value:"capDown", label:"產能下滑數（高→低）", header:"產能下滑數", metric:"cap", direction:"down"},
+  {value:"effDown", label:"人時性下滑數(平均)（高→低）", header:"人時性下滑數(平均)", metric:"eff", direction:"down"},
+  {value:"qtyUp", label:"生產量上升數（高→低）", header:"生產量上升數", metric:"qty", direction:"up"},
+  {value:"capUp", label:"產能上升數（高→低）", header:"產能上升數", metric:"cap", direction:"up"},
+  {value:"effUp", label:"人時性上升數(平均)（高→低）", header:"人時性上升數(平均)", metric:"eff", direction:"up"}
 ];
 function humanItemTableOption(value){
   return HUMAN_ITEM_TABLE_OPTIONS.find(x=>x.value===value) || HUMAN_ITEM_TABLE_OPTIONS[0];
 }
 function getHumanItemTableSetting(factoryKey){
   state.humanItemTableSettings = state.humanItemTableSettings || {};
-  if (!state.humanItemTableSettings[factoryKey]) state.humanItemTableSettings[factoryKey] = {groupFilter:"all", pairFilter:"all", metric:"humanAchTop"};
-  return state.humanItemTableSettings[factoryKey];
+  if (!state.humanItemTableSettings[factoryKey]) state.humanItemTableSettings[factoryKey] = {groupFilter:"all", pairFilter:"all", metric:"qtyDown"};
+  const s = state.humanItemTableSettings[factoryKey];
+  if (!HUMAN_ITEM_TABLE_OPTIONS.some(x=>x.value===s.metric)) s.metric = "qtyDown";
+  return s;
 }
 function humanItemMetricOptionsHTML(selected){
   return HUMAN_ITEM_TABLE_OPTIONS.map(opt => `<option value="${opt.value}" ${opt.value===selected?"selected":""}>${opt.label}</option>`).join("");
@@ -5562,189 +5559,128 @@ function humanItemRowsForRange(key, start, end){
   return filterByRange(state.humanFactories[key]?.itemRows || [], start, end)
     .filter(r => String(r?.temp || "4") === temp);
 }
+function humanItemCurrentCompareRange(){
+  if (state.mode === "month") {
+    const wk = getWholeWeekRangeForMonth($("yearSel")?.value, $("monthSel")?.value);
+    if (wk) return wk;
+  }
+  return getDateRange();
+}
+function humanItemPreviousCompareRange(){
+  const cur = humanItemCurrentCompareRange();
+  if (!cur?.start || !cur?.end) return {start:null,end:null,label:"前期"};
+  if (state.mode === "year") {
+    const y = Number(cur.start.slice(0,4)) - 1;
+    return {start:`${y}-01-01`, end:`${y}-12-31`, label:"前年"};
+  }
+  if (state.mode === "month") {
+    let y = Number($("yearSel")?.value), m = Number($("monthSel")?.value) - 1;
+    if (m <= 0){ m = 12; y -= 1; }
+    const wk = getWholeWeekRangeForMonth(y, String(m).padStart(2,"0"));
+    return wk ? {...wk,label:"前月"} : {start:null,end:null,label:"前月"};
+  }
+  if (state.mode === "week") {
+    const s = parseISO(cur.start), e = parseISO(cur.end);
+    return {start:toISO(addDays(s,-7)), end:toISO(addDays(e,-7)), label:"前週"};
+  }
+  const s = parseISO(cur.start), e = parseISO(cur.end);
+  if (!(s instanceof Date) || isNaN(s) || !(e instanceof Date) || isNaN(e)) return {start:null,end:null,label:"前期"};
+  const days = Math.max(1, Math.round((e-s)/86400000)+1);
+  const pe = addDays(s,-1), ps = addDays(pe,-(days-1));
+  return {start:toISO(ps), end:toISO(pe), label: state.mode === "day" ? "前日" : "前期"};
+}
 function humanAggregateItemRange(rows){
+  // 比照單廠日報：跨線別以「品名」彙總；生產量加總，產能/人時性取實際值平均。
   const map = new Map();
   for (const r of rows || []){
     if (!r || !r.product) continue;
-    const key = [humanCleanText(r.group), humanCleanText(r.line), humanCleanText(r.product), humanCleanText(r.pairType || humanPairTypeFromName(r.product))].join("|");
-    if (!map.has(key)) {
-      map.set(key, {
-        key,
-        group: r.group || "未分類",
-        line: r.line || "—",
-        product: r.product,
-        pairType: r.pairType || humanPairTypeFromName(r.product),
-        launchDaysSum: 0,
-        launchDaysCount: 0,
-        totalQty: 0,
-        capacity: 0,
-        efficiencySum: 0,
-        efficiencyCount: 0,
-        humanAchRateSum: 0,
-        humanAchRateCount: 0,
-        capacityAchRateSum: 0,
-        capacityAchRateCount: 0,
-        dates: new Set()
-      });
-    }
-    const o = map.get(key);
-    o.dates.add(r.date);
-    if (humanHasFiniteValue(r.launchDays)) { o.launchDaysSum += Number(r.launchDays); o.launchDaysCount += 1; }
+    const prodKey = humanCleanKey(r.product);
+    if (!prodKey || /(平均|合計|小計|總計)/.test(humanCleanText(r.product))) continue;
+    if (!map.has(prodKey)) map.set(prodKey, {
+      key:prodKey, product:r.product, pairType:r.pairType || humanPairTypeFromName(r.product),
+      totalQty:0, capacitySum:0, capacityCount:0, efficiencySum:0, efficiencyCount:0,
+      lineQty:new Map(), groupQty:new Map(), lineText:new Map(), groupText:new Map()
+    });
+    const o=map.get(prodKey);
+    const q=humanHasFiniteValue(r.totalQty)?Number(r.totalQty):0;
     if (humanHasFiniteValue(r.totalQty)) o.totalQty += Number(r.totalQty);
-    if (humanHasFiniteValue(r.capacity)) o.capacity += Number(r.capacity);
-    if (humanHasFiniteValue(r.efficiency)) { o.efficiencySum += Number(r.efficiency); o.efficiencyCount += 1; }
-    if (humanHasFiniteValue(r.humanAchRate)) { o.humanAchRateSum += Number(r.humanAchRate); o.humanAchRateCount += 1; }
-    if (humanHasFiniteValue(r.capacityAchRate)) { o.capacityAchRateSum += Number(r.capacityAchRate); o.capacityAchRateCount += 1; }
+    if (humanHasFiniteValue(r.capacity)){ o.capacitySum += Number(r.capacity); o.capacityCount += 1; }
+    if (humanHasFiniteValue(r.efficiency)){ o.efficiencySum += Number(r.efficiency); o.efficiencyCount += 1; }
+    const lk=humanCleanKey(r.line), gk=humanCleanKey(r.group);
+    if(lk){ o.lineQty.set(lk,(o.lineQty.get(lk)||0)+q); o.lineText.set(lk,r.line); }
+    if(gk){ o.groupQty.set(gk,(o.groupQty.get(gk)||0)+q); o.groupText.set(gk,r.group); }
   }
-  return Array.from(map.values()).map(o => ({
-    key: o.key,
-    group: o.group,
-    line: o.line,
-    product: o.product,
-    pairType: o.pairType,
-    launchDays: o.launchDaysCount ? (o.launchDaysSum / o.launchDaysCount) : null,
-    totalQty: o.totalQty,
-    capacity: o.capacity,
-    efficiency: o.efficiencyCount ? (o.efficiencySum / o.efficiencyCount) : null,
-    humanAchRate: o.humanAchRateCount ? (o.humanAchRateSum / o.humanAchRateCount) : null,
-    capacityAchRate: o.capacityAchRateCount ? (o.capacityAchRateSum / o.capacityAchRateCount) : null,
-    dayCount: o.dates.size
-  }));
+  const pickTop=(m)=>{ let bk="", bv=-Infinity; for(const [k,v] of m.entries()){ if(v>bv){bv=v;bk=k;} } return bk; };
+  return Array.from(map.values()).map(o=>{
+    const lk=pickTop(o.lineQty), gk=pickTop(o.groupQty);
+    return {
+      key:o.key, product:o.product, pairType:o.pairType,
+      line:lk?(o.lineText.get(lk)||lk):"—", group:gk?(o.groupText.get(gk)||gk):"未分類",
+      totalQty:o.totalQty,
+      capacity:o.capacityCount?o.capacitySum/o.capacityCount:null,
+      efficiency:o.efficiencyCount?o.efficiencySum/o.efficiencyCount:null
+    };
+  });
 }
 function humanBuildCompareItems(key){
-  const current = getDateRange();
-  const prev = getPreviousDateRange(current.start, current.end);
-  const currentAgg = humanAggregateItemRange(humanItemRowsForRange(key, current.start, current.end));
-  const prevAgg = prev ? humanAggregateItemRange(humanItemRowsForRange(key, prev.start, prev.end)) : [];
-  const prevMap = new Map(prevAgg.map(r => [r.key, r]));
-  const curMap = new Map(currentAgg.map(r => [r.key, r]));
-  const allKeys = Array.from(new Set([...curMap.keys(), ...prevMap.keys()]));
-  return allKeys.map(k => {
-    const cur = curMap.get(k) || {};
-    const prv = prevMap.get(k) || {};
-    const totalQty = Number(cur.totalQty) || 0;
-    const prevQty = Number(prv.totalQty) || 0;
-    const capacity = Number(cur.capacity) || 0;
-    const prevCapacity = Number(prv.capacity) || 0;
-    const efficiency = humanHasFiniteValue(cur.efficiency) ? Number(cur.efficiency) : 0;
-    const prevEfficiency = humanHasFiniteValue(prv.efficiency) ? Number(prv.efficiency) : 0;
+  const curRange=humanItemCurrentCompareRange();
+  const prevRange=humanItemPreviousCompareRange();
+  const currentAgg=humanAggregateItemRange(humanItemRowsForRange(key,curRange.start,curRange.end));
+  const prevAgg=prevRange.start?humanAggregateItemRange(humanItemRowsForRange(key,prevRange.start,prevRange.end)):[];
+  const cm=new Map(currentAgg.map(r=>[r.key,r])), pm=new Map(prevAgg.map(r=>[r.key,r]));
+  return Array.from(new Set([...cm.keys(),...pm.keys()])).map(k=>{
+    const c=cm.get(k), p=pm.get(k), meta=c||p;
+    const cq=c?.totalQty||0, pq=p?.totalQty||0;
+    const cc=humanHasFiniteValue(c?.capacity)?Number(c.capacity):NaN, pc=humanHasFiniteValue(p?.capacity)?Number(p.capacity):NaN;
+    const ce=humanHasFiniteValue(c?.efficiency)?Number(c.efficiency):NaN, pe=humanHasFiniteValue(p?.efficiency)?Number(p.efficiency):NaN;
     return {
-      key: k,
-      group: cur.group || prv.group || "未分類",
-      pairType: cur.pairType || prv.pairType || "一配",
-      product: cur.product || prv.product || "—",
-      line: cur.line || prv.line || "—",
-      launchDays: humanHasFiniteValue(cur.launchDays) ? Number(cur.launchDays) : (humanHasFiniteValue(prv.launchDays) ? Number(prv.launchDays) : null),
-      humanAchRate: humanHasFiniteValue(cur.humanAchRate) ? Number(cur.humanAchRate) : null,
-      capacityAchRate: humanHasFiniteValue(cur.capacityAchRate) ? Number(cur.capacityAchRate) : null,
-      totalQty,
-      capacity,
-      efficiency: humanHasFiniteValue(cur.efficiency) ? Number(cur.efficiency) : null,
-      qtyDown: Math.max(prevQty - totalQty, 0),
-      capDown: Math.max(prevCapacity - capacity, 0),
-      effDown: Math.max(prevEfficiency - efficiency, 0),
-      qtyUp: Math.max(totalQty - prevQty, 0),
-      capUp: Math.max(capacity - prevCapacity, 0),
-      effUp: Math.max(efficiency - prevEfficiency, 0)
+      key:k, product:meta?.product||"—", pairType:meta?.pairType||"一配", line:c?.line||p?.line||"—", group:c?.group||p?.group||"未分類",
+      qtyPrev:pq, qtyCur:cq, capPrev:pc, capCur:cc, effPrev:pe, effCur:ce,
+      qtyDown:pq-cq, capDown:Number.isFinite(pc)&&Number.isFinite(cc)?pc-cc:NaN, effDown:Number.isFinite(pe)&&Number.isFinite(ce)?pe-ce:NaN,
+      qtyUp:cq-pq, capUp:Number.isFinite(pc)&&Number.isFinite(cc)?cc-pc:NaN, effUp:Number.isFinite(pe)&&Number.isFinite(ce)?ce-pe:NaN,
+      prevLabel:prevRange.label
     };
   });
 }
 function humanApplyItemFilters(rows, setting){
-  return (rows || []).filter(r => {
-    if (setting.groupFilter && setting.groupFilter !== "all" && safeStr(r.group) !== safeStr(setting.groupFilter)) return false;
-    if (setting.pairFilter && setting.pairFilter !== "all" && safeStr(r.pairType) !== safeStr(setting.pairFilter)) return false;
+  return (rows||[]).filter(r=>{
+    if(setting.groupFilter!=="all" && safeStr(r.group)!==safeStr(setting.groupFilter)) return false;
+    if(setting.pairFilter!=="all" && safeStr(r.pairType)!==safeStr(setting.pairFilter)) return false;
     return true;
   });
 }
 function humanSortItemRows(rows, metric){
-  const opt = humanItemTableOption(metric);
-  const data = [...(rows || [])];
-  const val = r => {
-    if (metric === "humanAchTop" || metric === "humanAchLow") return humanHasFiniteValue(r.humanAchRate) ? Number(r.humanAchRate) : NaN;
-    if (metric === "capAchLow") return humanHasFiniteValue(r.capacityAchRate) ? Number(r.capacityAchRate) : NaN;
-    return humanHasFiniteValue(r[metric]) ? Number(r[metric]) : NaN;
-  };
-  data.sort((a,b) => {
-    const av = val(a), bv = val(b);
-    const aa = Number.isFinite(av) ? av : (metric === "humanAchLow" || metric === "capAchLow" ? Infinity : -Infinity);
-    const bb = Number.isFinite(bv) ? bv : (metric === "humanAchLow" || metric === "capAchLow" ? Infinity : -Infinity);
-    if (metric === "humanAchLow" || metric === "capAchLow") return aa - bb;
-    return bb - aa;
-  });
-  let filtered = data;
-  if (["qtyDown","capDown","effDown","qtyUp","capUp","effUp"].includes(metric)) filtered = filtered.filter(r => Number(val(r)) > 0);
-  if (["humanAchTop","humanAchLow","capAchLow"].includes(metric)) filtered = filtered.filter(r => Number.isFinite(val(r)));
-  return filtered.slice(0, opt.limit || 10);
+  const data=[...(rows||[])].filter(r=>humanHasFiniteValue(r[metric]) && Number(r[metric])>0);
+  data.sort((a,b)=>Number(b[metric])-Number(a[metric]));
+  return data.slice(0,10);
 }
 function humanItemMetricValueText(row, metric){
-  if (metric === "humanAchTop" || metric === "humanAchLow") return fmtPct(row.humanAchRate);
-  if (metric === "capAchLow") return fmtPct(row.capacityAchRate);
-  if (metric === "qtyDown" || metric === "qtyUp") return fmtDailyQty(row[metric]);
-  if (metric === "capDown" || metric === "capUp") return fmtDailyQty(row[metric]);
-  if (metric === "effDown" || metric === "effUp") return humanMetricFormat("efficiency", row[metric]);
-  return "—";
+  const opt=humanItemTableOption(metric), v=Number(row[metric]);
+  const fmt=(x)=>opt.metric==="qty"?fmtDailyQty(x):humanMetricFormat("efficiency",x);
+  let prev=NaN, cur=NaN;
+  if(opt.metric==="qty"){prev=row.qtyPrev;cur=row.qtyCur;}
+  else if(opt.metric==="cap"){prev=row.capPrev;cur=row.capCur;}
+  else {prev=row.effPrev;cur=row.effCur;}
+  return `<div class="font-bold">${fmt(v)}</div><div class="text-[11px] muted whitespace-nowrap">${row.prevLabel||"前期"}→現：${fmt(prev)} → ${fmt(cur)}</div>`;
 }
 function renderHumanItemTables(){
-  const grid = $("topTablesGrid");
-  if (!grid) return;
-  const keys = selectedFactoryKeys();
-  if (!keys.length){
-    grid.innerHTML = `<div class="card p-4 muted">請先選擇工廠後查看人時性商品對照表。</div>`;
-    return;
-  }
-  grid.innerHTML = keys.map(key => {
-    const setting = getHumanItemTableSetting(key);
-    const compareRows = humanBuildCompareItems(key);
-    const groupValues = Array.from(new Set(compareRows.map(r => safeStr(r.group).trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'zh-Hant'));
-    if (setting.groupFilter !== 'all' && !groupValues.includes(setting.groupFilter)) setting.groupFilter = 'all';
-    const filtered = humanApplyItemFilters(compareRows, setting);
-    const rows = humanSortItemRows(filtered, setting.metric);
-    const opt = humanItemTableOption(setting.metric);
-    const valueCol = opt.header;
-    const rowHtml = rows.map((r, idx) => `
-      <tr>
-        <td class="mono">${idx+1}</td>
-        <td>${escapeHTML(r.product || '—')}</td>
-        <td>${escapeHTML(r.line || '—')}</td>
-        <td class="text-right mono">${humanHasFiniteValue(r.launchDays) ? Math.round(Number(r.launchDays)).toLocaleString('zh-TW') : '—'}</td>
-        <td class="text-right mono">${humanItemMetricValueText(r, setting.metric)}</td>
-      </tr>`).join("") || `<tr><td colspan="5" class="muted">目前範圍無符合條件的商品資料</td></tr>`;
-    return `<div class="card p-4" data-human-item-card="${key}">
-      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <div>
-          <div class="text-sm font-bold">${HUMAN_FACTORIES[key].name}｜人時性商品對照表</div>
-          <div class="text-xs muted mt-1">依目前區間商品彙總；升降類指標會與前期比較</div>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <select data-human-item-select="group" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemGroupOptionsHTML(groupValues, setting.groupFilter)}</select>
-          <select data-human-item-select="pair" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemPairOptionsHTML(setting.pairFilter)}</select>
-          <select data-human-item-select="metric" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemMetricOptionsHTML(setting.metric)}</select>
-        </div>
-      </div>
-      <div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white">
-        <table>
-          <thead><tr><th>#</th><th>商品名</th><th>線別</th><th class="text-right">上市天數</th><th class="text-right">${escapeHTML(valueCol)}</th></tr></thead>
-          <tbody>${rowHtml}</tbody>
-        </table>
-      </div>
-    </div>`;
+  const grid=$("topTablesGrid"); if(!grid)return;
+  const keys=selectedFactoryKeys();
+  if(!keys.length){grid.innerHTML=`<div class="card p-4 muted">請先選擇工廠後查看人時性商品對照表。</div>`;return;}
+  grid.innerHTML=keys.map(key=>{
+    const setting=getHumanItemTableSetting(key), compareRows=humanBuildCompareItems(key);
+    const groupValues=Array.from(new Set(compareRows.map(r=>safeStr(r.group).trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+    if(setting.groupFilter!=="all"&&!groupValues.includes(setting.groupFilter))setting.groupFilter="all";
+    const rows=humanSortItemRows(humanApplyItemFilters(compareRows,setting),setting.metric), opt=humanItemTableOption(setting.metric);
+    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${escapeHTML(r.product||"—")}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${humanItemMetricValueText(r,setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">目前範圍無符合條件的上一期比較資料</td></tr>`;
+    return `<div class="card p-4" data-human-item-card="${key}"><div class="flex flex-wrap items-center justify-between gap-3 mb-3"><div><div class="text-sm font-bold">${HUMAN_FACTORIES[key].name}｜人時性商品對照表</div><div class="text-xs muted mt-1">依單廠日報邏輯：生產量採期間加總；產能、人時性採實際值平均，與前一時間範圍比較</div></div><div class="flex flex-wrap gap-2"><select data-human-item-select="group" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemGroupOptionsHTML(groupValues,setting.groupFilter)}</select><select data-human-item-select="pair" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemPairOptionsHTML(setting.pairFilter)}</select><select data-human-item-select="metric" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemMetricOptionsHTML(setting.metric)}</select></div></div><div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white"><table><thead><tr><th>#</th><th>商品名</th><th>線別</th><th class="text-right">${escapeHTML(opt.header)}</th></tr></thead><tbody>${rowHtml}</tbody></table></div></div>`;
   }).join("");
 }
 async function ensureHumanItemDataForCurrentSelection(){
-  const selected = selectedFactoryKeys();
-  if (!selected.length) return;
-  const cur = getDateRange();
-  const prev = getPreviousDateRange(cur.start, cur.end);
-  const monthKeys = Array.from(new Set([
-    ...monthKeysBetween(cur.start, cur.end),
-    ...(prev ? monthKeysBetween(prev.start, prev.end) : [])
-  ])).sort();
-  if (!monthKeys.length) return;
-  await Promise.all(selected.map(async key => {
-    await ensureHumanFactoryIndex(key);
-    const files = humanFilesForMonthKeys(state.humanFactories[key]?.files || [], monthKeys);
-    return humanLoadFactoryFiles(key, files);
-  }));
+  const selected=selectedFactoryKeys(); if(!selected.length)return;
+  const cur=humanItemCurrentCompareRange(), prev=humanItemPreviousCompareRange();
+  const monthKeys=Array.from(new Set([...monthKeysBetween(cur.start,cur.end),...(prev.start?monthKeysBetween(prev.start,prev.end):[])])).sort();
+  await Promise.all(selected.map(async key=>{await ensureHumanFactoryIndex(key);const files=humanFilesForMonthKeys(state.humanFactories[key]?.files||[],monthKeys);return humanLoadFactoryFiles(key,files);}));
 }
 
 function renderHumanEmpty(){
@@ -5943,7 +5879,7 @@ wireUI = function(){
     const setting = getHumanItemTableSetting(key);
     if (type === "group") setting.groupFilter = sel.value || "all";
     if (type === "pair") setting.pairFilter = sel.value || "all";
-    if (type === "metric") setting.metric = sel.value || "humanAchTop";
+    if (type === "metric") setting.metric = sel.value || "qtyDown";
     renderHumanItemTables();
   });
   applyQueryTypeView();
