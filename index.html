@@ -344,7 +344,7 @@
     <section class="mt-4 card p-4" id="compareTableCard">
       <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div>
-          <div class="text-sm font-bold">KPI 對比明細表</div>
+          <div class="text-sm font-bold" id="compareTableTitle">KPI 對比明細表</div>
           <div class="text-xs muted mt-1" id="compareSub">差異 = 第二個選擇廠 - 第一個選擇廠</div>
         </div>
       </div>
@@ -5273,6 +5273,104 @@ function renderHumanTrend(){
   });
   updateTrendDeltaToggleBtn();
 }
+
+function humanCompareMetricDefs(){
+  return [
+    {key:"totalQty", title:"總生產量", type:"simple"},
+    {key:"attendance", title:"出勤人數", type:"simple"},
+    {key:"efficiency", title:"人時性", type:"simple"},
+    {key:"multi", title:"多次生產數(平均)", type:"simple"},
+    {key:"changeoverMin", title:"平均換線時間(分)", type:"simple"},
+    {key:"abnormalStop", title:"異常停線(5min↑)", type:"compound", diffBase:"abCnt"},
+    {key:"shortStop", title:"短暫停線(5min↓)", type:"compound", diffBase:"shCnt"}
+  ];
+}
+function humanCompoundDisplay(def, agg){
+  if (!agg) return "—";
+  if (def.key === "abnormalStop") {
+    return `時間：${humanFormatCardValue("abTime", agg.abTime)}｜次數：${humanFormatCardValue("abCnt", agg.abCnt)}`;
+  }
+  if (def.key === "shortStop") {
+    return `設備：${humanFormatCardValue("shEquip", agg.shEquip)}｜次數：${humanFormatCardValue("shCnt", agg.shCnt)}`;
+  }
+  return "—";
+}
+function humanCompoundDiffDisplay(def, aAgg, bAgg){
+  if (!aAgg || !bAgg) return "—";
+  if (def.key === "abnormalStop") {
+    const timeDiff = Number.isFinite(Number(aAgg.abTime)) && Number.isFinite(Number(bAgg.abTime)) ? Number(bAgg.abTime) - Number(aAgg.abTime) : NaN;
+    const cntDiff = Number.isFinite(Number(aAgg.abCnt)) && Number.isFinite(Number(bAgg.abCnt)) ? Number(bAgg.abCnt) - Number(aAgg.abCnt) : NaN;
+    return `時間：${humanFormatCardValue("abTime", timeDiff)}｜次數：${humanFormatCardValue("abCnt", cntDiff)}`;
+  }
+  if (def.key === "shortStop") {
+    const equipDiff = Number.isFinite(Number(aAgg.shEquip)) && Number.isFinite(Number(bAgg.shEquip)) ? Number(bAgg.shEquip) - Number(aAgg.shEquip) : NaN;
+    const cntDiff = Number.isFinite(Number(aAgg.shCnt)) && Number.isFinite(Number(bAgg.shCnt)) ? Number(bAgg.shCnt) - Number(aAgg.shCnt) : NaN;
+    return `設備：${humanFormatCardValue("shEquip", equipDiff)}｜次數：${humanFormatCardValue("shCnt", cntDiff)}`;
+  }
+  return "—";
+}
+function humanComparePrimaryValue(def, agg){
+  if (!agg) return NaN;
+  if (def.type === "simple") return Number(agg[def.key]);
+  if (def.key === "abnormalStop") return Number(agg.abCnt);
+  if (def.key === "shortStop") return Number(agg.shCnt);
+  return NaN;
+}
+function humanCompareValue(def, agg){
+  if (!agg) return "—";
+  return def.type === "compound" ? humanCompoundDisplay(def, agg) : humanMetricFormat(def.key, agg[def.key]);
+}
+function renderHumanCompareTable(){
+  const title = $("compareTableTitle");
+  if (title) title.textContent = "KPI 對比明細表";
+  const keys = selectedFactoryKeys();
+  const header = document.querySelector("#compareTbody")?.closest("table")?.querySelector("thead tr");
+  const tbody = $("compareTbody");
+  const sub = $("compareSub");
+  if (!tbody || !header) return;
+  if (!keys.length){
+    header.innerHTML = `<th>指標</th><th class="text-right">數值</th>`;
+    tbody.innerHTML = `<tr><td colspan="2" class="muted">請先選擇 1～4 個工廠後查看人時性 KPI 對比明細表。</td></tr>`;
+    if (sub) sub.textContent = "人時性主要對比項目：總生產量、出勤人數、人時性、多次生產數(平均)、平均換線時間與停線資訊";
+    return;
+  }
+
+  const range = getDateRange();
+  const slots = keys.map(key => ({ key, agg: humanAggregateCardStats(humanRowsForRange(key, range.start, range.end)) }));
+  const defs = humanCompareMetricDefs();
+  const showDiff = slots.length === 2;
+
+  header.innerHTML = `<th>指標</th>${slots.map(s => `<th class="text-right">${HUMAN_FACTORIES[s.key].name}</th>`).join("")}${showDiff ? `<th class="text-right">差異</th><th class="text-right">差異率</th><th>判讀</th>` : ""}`;
+
+  if (sub) {
+    if (showDiff) sub.textContent = `差異 = ${HUMAN_FACTORIES[slots[1].key].name} - ${HUMAN_FACTORIES[slots[0].key].name}`;
+    else if (slots.length > 2) sub.textContent = "三廠以上檢視：僅顯示各廠數值，不顯示差異、差異率與判讀";
+    else sub.textContent = "單廠檢視，請再選擇其他工廠進行差異比較";
+  }
+
+  tbody.innerHTML = defs.map(def => {
+    const valueCells = slots.map(s => `<td class="text-right mono">${humanCompareValue(def, s.agg)}</td>`).join("");
+    if (!showDiff) return `<tr><td>${def.title}</td>${valueCells}</tr>`;
+
+    const aAgg = slots[0].agg, bAgg = slots[1].agg;
+    const a = humanComparePrimaryValue(def, aAgg), b = humanComparePrimaryValue(def, bAgg);
+    const diff = Number.isFinite(a) && Number.isFinite(b) ? (b - a) : NaN;
+    const diffRate = Number.isFinite(a) && a !== 0 && Number.isFinite(diff) ? diff / a : null;
+    let diffText = "—";
+    if (def.type === "compound") diffText = humanCompoundDiffDisplay(def, aAgg, bAgg);
+    else diffText = humanMetricFormat(def.key, diff);
+
+    const higherBad = ["multi","changeoverMin","abnormalStop","shortStop"].includes(def.key);
+    let judge = "—";
+    if (Number.isFinite(diff)) {
+      if (Math.abs(diff) < 1e-9) judge = "兩廠接近";
+      else if (higherBad) judge = diff > 0 ? `${HUMAN_FACTORIES[slots[1].key].name}較高，需注意` : `${HUMAN_FACTORIES[slots[0].key].name}較高，需注意`;
+      else judge = diff > 0 ? `${HUMAN_FACTORIES[slots[1].key].name}較高` : `${HUMAN_FACTORIES[slots[0].key].name}較高`;
+    }
+    return `<tr><td>${def.title}</td>${valueCells}<td class="text-right mono">${diffText}</td><td class="text-right mono">${def.type === "simple" ? fmtPct(diffRate) : "—"}</td><td>${judge}</td></tr>`;
+  }).join("");
+}
+
 function renderHumanEmpty(){
   const wrap=$("kpiCards");
   if (wrap) wrap.innerHTML="";
@@ -5281,6 +5379,7 @@ function renderHumanEmpty(){
   if (ctx && window.Chart){
     state.charts.trend=new Chart(ctx,{type:"line",data:{labels:[],datasets:[]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:"請選擇 1～4 個工廠進行人時性比較"}},scales:{y:{beginAtZero:true}}}});
   }
+  renderHumanCompareTable();
 }
 
 function setMetricOptionsForQuery(){
@@ -5305,10 +5404,12 @@ function applyQueryTypeView(){
   if ($("factorySelectTitle")) $("factorySelectTitle").textContent=human?"選擇對比工廠及指標":"選擇對比工廠及指標";
   if ($("factorySelectSub")) $("factorySelectSub").textContent=human?(state.humanTemp === "18" ? "18°C 僅支援大溪、晉欣；新豐與長家不可選取" : "4°C 可選擇最多 4 個廠別進行人時性同圖比較"):"最多選擇 4 個廠別進行同圖與區間比較";
   if ($("trendSubtext")) $("trendSubtext").textContent=human?`${state.humanTemp}°C｜同一人時性指標，多廠同圖比較`:"同一指標，多廠同圖比較";
+  if ($("compareTableTitle")) $("compareTableTitle").textContent = "KPI 對比明細表";
+  if ($("compareSub") && human) $("compareSub").textContent = "人時性主要對比項目：總生產量、出勤人數、人時性、多次生產數(平均)、平均換線時間與停線資訊";
   if ($("dataSourceNote")) $("dataSourceNote").innerHTML=human
     ? `人時性資料來源：晉欣、大溪、新豐日報站的 <code>data/manifest.json</code>，長家日報站的 <code>data/manifest_changjia.json</code> 及其列出的 Excel；切換人時性時優先載入四廠近 3 個月資料，完成後自動於背景載入其餘月份；背景載入採單檔、閒置時解析與延後去重，降低操作期間卡頓。`
     : `資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。`;
-  const halfOnly=["barCard","compareTableCard","topTablesGrid","dailyDetailCard"];
+  const halfOnly=["barCard","topTablesGrid","dailyDetailCard"];
   halfOnly.forEach(id=>{const el=$(id);if(el)el.classList.toggle("hidden",human);});
   if (human) destroyChart("bar");
   setMetricOptionsForQuery();
@@ -5383,6 +5484,7 @@ renderAll = async function(){
   }
   await ensureHumanDataForCurrentRange();
   renderHumanTrend();
+  renderHumanCompareTable();
 };
 
 loadAll = async function(){
