@@ -372,11 +372,11 @@
       <div class="flex flex-col gap-4">
         <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div class="min-w-0">
-            <div class="text-sm font-bold">日別明細總覽</div>
-            <div class="text-xs muted mt-1">可依目前選擇區間檢視各廠半成品日別明細，並可展開前段期間比較</div>
+            <div class="text-sm font-bold" id="dailyDetailTitle">日別明細總覽</div>
+            <div class="text-xs muted mt-1" id="dailyDetailSub">可依目前選擇區間檢視各廠半成品日別明細，並可展開前段期間比較</div>
             <div class="mt-3 flex flex-wrap items-center gap-3">
               <button id="dailyPrevBtn" type="button" class="seg-btn">前段明細展開</button>
-              <div class="text-sm"><span class="font-medium">日別明細</span><span class="muted">（依日期排序）</span></div>
+              <div class="text-sm" id="dailyDetailMainLabel"><span class="font-medium">日別明細</span><span class="muted">（依日期排序）</span></div>
               <div class="text-xs muted" id="dailyDetailRangeLabel">—</div>
             </div>
           </div>
@@ -393,7 +393,7 @@
             <select id="dailyDetailFactory" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm"></select>
           </div>
           <div class="lg:col-span-6">
-            <label class="text-xs muted">半成品名搜尋（輸入關鍵字）</label>
+            <label class="text-xs muted" id="dailySearchLabel">半成品名搜尋（輸入關鍵字）</label>
             <input id="dailySemiSearch" class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm" placeholder="例如：肉燥、鮭魚、海鮮湯凍" autocomplete="off" />
             <div id="dailySemiSuggest" class="mt-2 hidden rounded-xl border border-slate-200 bg-white overflow-hidden"></div>
           </div>
@@ -408,6 +408,29 @@
             <thead id="dailyDetailThead"></thead>
             <tbody id="dailyDetailTbody"></tbody>
           </table>
+        </div>
+
+        <div id="humanDailyTrendSection" class="hidden">
+          <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mt-2">
+            <div>
+              <div class="text-sm font-bold">趨勢圖</div>
+              <div class="text-xs muted mt-1">左側顯示前一時間範圍，右側顯示目前選擇的時間範圍</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="text-xs muted" for="humanDailyTrendMetric">顯示項目</label>
+              <select id="humanDailyTrendMetric" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm"></select>
+            </div>
+          </div>
+          <div class="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="rounded-2xl border border-slate-200 p-3 bg-white">
+              <div id="humanPrevTrendTitle" class="text-sm font-bold mb-2">前期</div>
+              <div class="chart-wrap h-[280px]"><canvas id="humanPrevTrendChart"></canvas></div>
+            </div>
+            <div class="rounded-2xl border border-slate-200 p-3 bg-white">
+              <div id="humanCurTrendTitle" class="text-sm font-bold mb-2">目前區間</div>
+              <div class="chart-wrap h-[280px]"><canvas id="humanCurTrendChart"></canvas></div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -1504,6 +1527,7 @@ function dedupeFactoryData(target){
   target.summary = Array.from(sm.values()).sort((a,b)=>safeStr(a.date).localeCompare(safeStr(b.date)));
 }
 
+// 僅供週別選單／週別模式使用；月別數值不得直接採用此跨月範圍。
 function getWholeWeekRangeForMonth(year, month){
   const y = Number(year), m = Number(month);
   if (!y || !m) return null;
@@ -1516,14 +1540,9 @@ function getWholeWeekRangeForMonth(year, month){
 }
 
 function getChartDateRange(){
-  const base = getDateRange();
-  // 月別的趨勢圖是「週二～週一」週別比較，跨月週必須用完整週資料，
-  // 例如 04/28～05/04 不能只取 04/28～04/30。
-  if (state.mode === "month"){
-    const wk = getWholeWeekRangeForMonth($("yearSel").value, $("monthSel").value);
-    if (wk) return wk;
-  }
-  return base;
+  // 月別一律只使用該曆月 1 日～月底，不再為了週別顯示向前／向後跨月展開。
+  // 趨勢圖仍可用週別分組，但月初、月末只加總該月內實際存在的日期。
+  return getDateRange();
 }
 
 function getNeededMonthKeys(){
@@ -1534,9 +1553,8 @@ function getNeededMonthKeys(){
   }
   if (mode === "month"){
     const y = $("yearSel").value, m = $("monthSel").value;
-    const wk = getWholeWeekRangeForMonth(y, m);
-    // 月別圖表使用完整週，因此預先把前後跨週涉及的月份也載入。
-    return wk ? monthKeysBetween(wk.start, wk.end) : (y && m ? [`${y}-${m}`] : []);
+    // 月別只讀取所選曆月，避免月初／月底完整週把前後月份資料帶進月別數值。
+    return y && m ? [`${y}-${m}`] : [];
   }
   if (mode === "week"){
     const w = state.weeksAll.find(x => x.start === $("weekSel").value);
@@ -1948,6 +1966,21 @@ function bucketKey(date, gran){
   if (gran === "week") return toISO(weekStartTue(parseISO(date)));
   return date;
 }
+function clippedWeekRangeForMonth(weekKey){
+  const s = parseISO(weekKey);
+  const e = addDays(s, 6);
+  if (state.mode !== "month") return {start:s,end:e};
+  const y = Number($("yearSel")?.value);
+  const m = Number($("monthSel")?.value);
+  if (!y || !m) return {start:s,end:e};
+  const ms = new Date(y, m-1, 1);
+  const me = new Date(y, m, 0);
+  return {start: s < ms ? ms : s, end: e > me ? me : e};
+}
+function clippedWeekLabelForMonth(weekKey){
+  const rg = clippedWeekRangeForMonth(weekKey);
+  return `${fmtMMDD(rg.start)}~${fmtMMDD(rg.end)}`;
+}
 function aggregateSeries(rows, metric, gran){
   const m = new Map();
   for (const r of rows){
@@ -1959,8 +1992,7 @@ function aggregateSeries(rows, metric, gran){
   const labels = keys.map(k => {
     if (gran === "month") return `${Number(k.slice(5,7))}月`;
     if (gran === "week"){
-      const s = parseISO(k), e = addDays(s,6);
-      return `${fmtMMDD(s)}~${fmtMMDD(e)}`;
+      return state.mode === "month" ? clippedWeekLabelForMonth(k) : (()=>{ const s=parseISO(k), e=addDays(s,6); return `${fmtMMDD(s)}~${fmtMMDD(e)}`; })();
     }
     return k.slice(5);
   });
@@ -1986,6 +2018,8 @@ async function renderAll(){
 function renderEmptyState(message){
   destroyChart("trend");
   destroyChart("bar");
+  destroyChart("humanDailyPrev");
+  destroyChart("humanDailyCur");
   const msg = message || "請先選擇工廠。";
   const kpi = $("kpiCards");
   if (kpi) kpi.innerHTML = `<div class="card p-4 sm:col-span-2 lg:col-span-5 muted">${msg}</div>`;
@@ -1995,14 +2029,21 @@ function renderEmptyState(message){
   if (sub) sub.textContent = "未選擇工廠時不載入資料";
   const legend = $("trendLegend");
   if (legend) legend.innerHTML = "";
-  ["slotATopTbody","slotBTopTbody"].forEach(id => { const el=$(id); if (el) el.innerHTML = `<tr><td colspan="4" class="muted">${msg}</td></tr>`; });
-  const topGrid = $("topTablesGrid"); if (topGrid) topGrid.innerHTML = `<div class="card p-4 muted">${msg}</div>`;
-  const dailyCols = renderDailyDetailHeader();
-  const dailyBody = $("dailyDetailTbody"); if (dailyBody) dailyBody.innerHTML = `<tr><td colspan="${(dailyCols.length || 1)}" class="muted">${msg}</td></tr>`;
+  const topGrid = $("topTablesGrid");
+  if (topGrid) topGrid.innerHTML = `<div class="card p-4 muted">${msg}</div>`;
+  if (state.queryType === "human") {
+    const cols = renderHumanDailyDetailHeader();
+    const dailyBody = $("dailyDetailTbody");
+    if (dailyBody) dailyBody.innerHTML = `<tr><td colspan="${(cols.length || 1)}" class="muted">${msg}</td></tr>`;
+    const trendWrap = $("humanDailyTrendSection");
+    if (trendWrap) trendWrap.classList.remove("hidden");
+  } else {
+    const cols = renderDailyDetailHeader();
+    const dailyBody = $("dailyDetailTbody");
+    if (dailyBody) dailyBody.innerHTML = `<tr><td colspan="${(cols.length || 1)}" class="muted">${msg}</td></tr>`;
+  }
   const dailyCount = $("dailyDetailCount"); if (dailyCount) dailyCount.textContent = "0 筆";
   const dailyRange = $("dailyDetailRangeLabel"); if (dailyRange) dailyRange.textContent = msg;
-  const tA = $("slotATopTitle"); if (tA) tA.textContent = "廠別 A｜報廢 / 超用 Top 10";
-  const tB = $("slotBTopTitle"); if (tB) tB.textContent = "廠別 B｜報廢 / 超用 Top 10";
   setDataStatus("尚未選擇工廠；請先選擇 1～4 個工廠後再載入資料");
 }
 
@@ -3048,6 +3089,18 @@ function currentData(){
   const {start,end} = getDateRange();
   const prevRange = getPreviousDateRange();
   const chartRange = getChartDateRange();
+  if (state.queryType === "human"){
+    return {
+      start,
+      end,
+      prevStart: prevRange.start,
+      prevEnd: prevRange.end,
+      compareLabel: `比${prevRange.label}`,
+      chartStart: chartRange.start,
+      chartEnd: chartRange.end,
+      slots: selectedFactoryKeys().map(key => ({key}))
+    };
+  }
   const slots = selectedFactoryKeys().map(key => {
     const fstate = state.factories[key] || emptyFactoryState();
     const summaryRows = filterByRange(fstate.summary || [], start, end);
@@ -3760,6 +3813,32 @@ function dailyCsvEscape(v){
 }
 
 function downloadDailyDetailCsv(data){
+  if (state.queryType === "human") {
+    const rows = buildHumanDailyDetailRows(data).slice(0,500);
+    const cols = renderHumanDailyDetailHeader();
+    const header = cols.map(c => dailyCsvEscape(c.label)).join(",");
+    const lines = [header];
+    let lastRangeKey = null;
+    let lastRangeMeta = null;
+    if (!rows.length) lines.push(dailyCsvEscape("目前沒有可匯出的資料"));
+    else {
+      for (const r of rows){
+        const rangeKey = `${r.rangeLabel || "目前區間"}|${r.rangeStart || ""}|${r.rangeEnd || ""}`;
+        const curMeta = { label:r.rangeLabel || '目前區間', span:dailyRangeText({start:r.rangeStart,end:r.rangeEnd}) };
+        if (getDailyDetailState().prevExpanded && lastRangeKey !== null && rangeKey !== lastRangeKey) lines.push(dailyCsvEscape(`以上：${lastRangeMeta.label}｜${lastRangeMeta.span} / 以下：${curMeta.label}｜${curMeta.span}`));
+        lastRangeKey = rangeKey; lastRangeMeta = curMeta;
+        lines.push(cols.map(c => dailyCsvEscape((c.cell(r) || '').replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#39;/g,"'").replace(/&quot;/g,'"'))).join(','));
+      }
+    }
+    const blob = new Blob(["\ufeff" + lines.join("\r\n")], {type:"text/csv;charset=utf-8;"});
+    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    const cur = dailyRangeText({start:data.start,end:data.end}).replace(/\s+/g,"");
+    a.href = url; a.download = `人時性日別明細總覽_${cur}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    return;
+  }
   const rows = buildDailyDetailRows(data).slice(0,500);
   const cols = getDailyDetailColumns();
   const header = cols.map(c => dailyCsvEscape(c.label)).join(",");
@@ -3879,10 +3958,285 @@ function renderDailySemiSuggestions(data){
   box.classList.remove("hidden");
 }
 
+const HUMAN_DAILY_TREND_OPTIONS = [
+  ["qty","生產量"],
+  ["people","人數"],
+  ["cap","產能/時"],
+  ["eff","人時性"],
+  ["runMin","稼動時間/分"],
+  ["changeMin","換線時間(分)"]
+];
+function ensureHumanDailyState(){
+  state.humanDaily = state.humanDaily || {};
+  if (!state.humanDaily.metric) state.humanDaily.metric = "qty";
+  return state.humanDaily;
+}
+function humanDailyMetricLabel(metric){
+  return Object.fromEntries(HUMAN_DAILY_TREND_OPTIONS)[metric] || "數值";
+}
+function humanDailyMetricValue(row, metric){
+  if (!row) return NaN;
+  if (metric === "qty") return Number(row.totalQty);
+  if (metric === "people") return humanHasFiniteValue(row.peopleAct) ? Number(row.peopleAct) : Number(row.peopleStd);
+  if (metric === "cap") return Number(row.capacity);
+  if (metric === "eff") return Number(row.efficiency);
+  if (metric === "runMin") return Number(row.runMin);
+  if (metric === "changeMin") return Number(row.changeMin);
+  return NaN;
+}
+function humanDailyMetricText(row, metric){
+  const v = humanDailyMetricValue(row, metric);
+  if (metric === "qty") return fmtDailyQty(v);
+  if (metric === "people") return Number.isFinite(v) ? v.toLocaleString("zh-TW", {maximumFractionDigits:2}) : "—";
+  if (metric === "runMin" || metric === "changeMin") return Number.isFinite(v) ? v.toLocaleString("zh-TW", {maximumFractionDigits:1}) : "—";
+  return Number.isFinite(v) ? v.toLocaleString("zh-TW", {maximumFractionDigits:2}) : "—";
+}
+function humanDailyColumnText(v, kind="num"){
+  if (!Number.isFinite(Number(v))) return "—";
+  if (kind === "qty") return fmtDailyQty(v);
+  if (kind === "int") return Number(v).toLocaleString("zh-TW", {maximumFractionDigits:0});
+  return Number(v).toLocaleString("zh-TW", {maximumFractionDigits:2});
+}
+function buildHumanDailyDetailRows(data){
+  const cur = { start:data.start, end:data.end, label:"目前區間" };
+  const ranges = [cur];
+  if (getDailyDetailState().prevExpanded) {
+    const prev = getPreviousDateRange(data.start, data.end);
+    if (prev) ranges.unshift(prev);
+  }
+  const selectedFactory = getDailyDetailState().factory || "all";
+  const q = normalizeDailySearch(getDailyDetailState().query || "");
+  const out = [];
+  for (const key of selectedFactoryKeys()){
+    if (selectedFactory !== "all" && key !== selectedFactory) continue;
+    const allRows = (state.humanFactories[key]?.itemRows || []).filter(r => String(r?.temp || "4") === String(state.humanTemp || "4"));
+    for (const rg of ranges){
+      const rows = filterByRange(allRows, rg.start, rg.end);
+      for (const r of rows){
+        if (q && !normalizeDailySearch(r.product).includes(q)) continue;
+        out.push(Object.assign({}, r, { factoryKey:key, rangeLabel:rg.label, rangeStart:rg.start, rangeEnd:rg.end }));
+      }
+    }
+  }
+  out.sort((a,b)=> safeStr(a.date).localeCompare(safeStr(b.date)) || safeStr(shortFactoryName(a.factoryKey)).localeCompare(shortFactoryName(b.factoryKey)) || safeStr(a.product).localeCompare(safeStr(b.product)) || safeStr(a.line).localeCompare(safeStr(b.line)) );
+  return out;
+}
+function renderHumanDailyDetailHeader(){
+  const thead = $("dailyDetailThead");
+  if (!thead) return [];
+  const cols = [
+    { label:"日期", cell:r=>escapeHTML(safeStr(r.date)), cls:"mono" },
+    { label:"商品名", cell:r=>`<button type="button" class="text-left hover:underline hover:text-slate-900" data-human-daily-product="${escapeHTML(r.product)}" data-human-daily-factory="${r.factoryKey}">${escapeHTML(r.product || '—')}</button>` },
+    { label:"線別", cell:r=>escapeHTML(r.line || '—') },
+    { label:"生產量", cell:r=>humanDailyColumnText(r.totalQty,'qty'), cls:"text-right mono" },
+    { label:"多次生產", cell:r=>humanDailyColumnText(r.multi,'int'), cls:"text-right mono" },
+    { label:"排開人數", cell:r=>humanDailyColumnText(r.peopleStd), cls:"text-right mono" },
+    { label:"實際人數", cell:r=>humanDailyColumnText(r.peopleAct), cls:"text-right mono" },
+    { label:"產能/時", cell:r=>humanDailyColumnText(r.capacity), cls:"text-right mono" },
+    { label:"人時性", cell:r=>humanDailyColumnText(r.efficiency), cls:"text-right mono" },
+    { label:"換線/分", cell:r=>humanDailyColumnText(r.changeMin), cls:"text-right mono" },
+    { label:"稼動時間/分", cell:r=>humanDailyColumnText(r.runMin), cls:"text-right mono" }
+  ];
+  thead.innerHTML = `<tr>${cols.map(c => `<th${c.cls ? ` class="${c.cls}"` : ""}>${c.label}</th>`).join("")}</tr>`;
+  return cols;
+}
+function renderHumanDailySuggestions(data){
+  const box = $("dailySemiSuggest");
+  if (!box) return;
+  const q = normalizeDailySearch(getDailyDetailState().query || "");
+  if (!q) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const selectedFactory = getDailyDetailState().factory || "all";
+  const m = new Map();
+  for (const key of selectedFactoryKeys()){
+    if (selectedFactory !== "all" && key !== selectedFactory) continue;
+    for (const r of (state.humanFactories[key]?.itemRows || []).filter(x => String(x?.temp || '4') === String(state.humanTemp || '4'))){
+      const product = safeStr(r.product).trim();
+      if (!product || !normalizeDailySearch(product).includes(q)) continue;
+      const k = `${key}||${product}`;
+      if (!m.has(k)) m.set(k, {factoryKey:key, product, lines:new Set(), count:0});
+      const item = m.get(k);
+      if (r.line) item.lines.add(r.line);
+      item.count += 1;
+    }
+  }
+  const items = Array.from(m.values()).sort((a,b)=>b.count-a.count || safeStr(a.product).localeCompare(safeStr(b.product))).slice(0,12);
+  if (!items.length){
+    box.innerHTML = `<div class="px-3 py-2 text-sm muted">找不到符合「${escapeHTML(getDailyDetailState().query || "")}」的商品。</div>`;
+    box.classList.remove("hidden");
+    return;
+  }
+  box.innerHTML = items.map(item => {
+    const lines = Array.from(item.lines).slice(0,2).join("、") || "—";
+    return `<button type="button" class="w-full text-left px-3 py-2 hover:bg-slate-50 border-b border-slate-100" data-human-daily-product="${escapeHTML(item.product)}" data-human-daily-factory="${item.factoryKey}"><div class="text-sm font-semibold"><span class="factory-dot" style="background:${FACTORIES[item.factoryKey].color};margin-right:6px"></span>${escapeHTML(item.product)}</div><div class="text-xs muted mt-1">${shortFactoryName(item.factoryKey)}｜${escapeHTML(lines)}｜${item.count.toLocaleString("zh-TW")} 筆</div></button>`;
+  }).join("");
+  box.classList.remove("hidden");
+}
+function humanTrendRowsForProduct(factoryKey, start, end, product){
+  const productKey = humanCleanKey(product);
+  const rows = filterByRange((state.humanFactories[factoryKey]?.itemRows || []).filter(r => String(r?.temp || '4') === String(state.humanTemp || '4')), start, end)
+    .filter(r => humanCleanKey(r.product) === productKey);
+  const map = new Map();
+  for (const r of rows){
+    if (!map.has(r.date)) map.set(r.date, {date:r.date, totalQty:0, multi:0, multiCount:0, peopleStd:0, peopleStdCount:0, peopleAct:0, peopleActCount:0, capacity:0, capacityCount:0, efficiency:0, efficiencyCount:0, changeMin:0, changeMinCount:0, runMin:0});
+    const o = map.get(r.date);
+    if (humanHasFiniteValue(r.totalQty)) o.totalQty += Number(r.totalQty);
+    if (humanHasFiniteValue(r.multi)) { o.multi += Number(r.multi); o.multiCount += 1; }
+    if (humanHasFiniteValue(r.peopleStd)) { o.peopleStd += Number(r.peopleStd); o.peopleStdCount += 1; }
+    if (humanHasFiniteValue(r.peopleAct)) { o.peopleAct += Number(r.peopleAct); o.peopleActCount += 1; }
+    if (humanHasFiniteValue(r.capacity)) { o.capacity += Number(r.capacity); o.capacityCount += 1; }
+    if (humanHasFiniteValue(r.efficiency)) { o.efficiency += Number(r.efficiency); o.efficiencyCount += 1; }
+    if (humanHasFiniteValue(r.changeMin)) { o.changeMin += Number(r.changeMin); o.changeMinCount += 1; }
+    if (humanHasFiniteValue(r.runMin)) o.runMin += Number(r.runMin);
+  }
+  return Array.from(map.values()).sort((a,b)=>safeStr(a.date).localeCompare(safeStr(b.date))).map(o => ({
+    date:o.date,
+    totalQty:o.totalQty,
+    multi:o.multiCount ? o.multi / o.multiCount : null,
+    peopleStd:o.peopleStdCount ? o.peopleStd / o.peopleStdCount : null,
+    peopleAct:o.peopleActCount ? o.peopleAct / o.peopleActCount : null,
+    capacity:o.capacityCount ? o.capacity / o.capacityCount : null,
+    efficiency:o.efficiencyCount ? o.efficiency / o.efficiencyCount : null,
+    changeMin:o.changeMinCount ? o.changeMin / o.changeMinCount : null,
+    runMin:o.runMin
+  }));
+}
+function humanTrendValuesByMetric(rows, metric){
+  return (rows || []).map(r => {
+    if (metric === 'qty') return Number(r.totalQty) || 0;
+    if (metric === 'people') return humanHasFiniteValue(r.peopleAct) ? Number(r.peopleAct) : (humanHasFiniteValue(r.peopleStd) ? Number(r.peopleStd) : null);
+    if (metric === 'cap') return humanHasFiniteValue(r.capacity) ? Number(r.capacity) : null;
+    if (metric === 'eff') return humanHasFiniteValue(r.efficiency) ? Number(r.efficiency) : null;
+    if (metric === 'runMin') return humanHasFiniteValue(r.runMin) ? Number(r.runMin) : null;
+    if (metric === 'changeMin') return humanHasFiniteValue(r.changeMin) ? Number(r.changeMin) : null;
+    return null;
+  });
+}
+function humanSharedTrendScale(metric, leftRows, rightRows){
+  const values = [...humanTrendValuesByMetric(leftRows, metric), ...humanTrendValuesByMetric(rightRows, metric)]
+    .filter(v => Number.isFinite(v));
+  if (!values.length) return null;
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max){
+    const basePad = Math.abs(min) * 0.05 || 1;
+    min -= basePad;
+    max += basePad;
+  } else {
+    const span = max - min;
+    const pad = span * 0.08;
+    min -= pad;
+    max += pad;
+  }
+  if (['qty','people','runMin','changeMin'].includes(metric)) min = Math.max(0, min);
+  return { min, max };
+}
+function renderHumanDailyTrendChart(chartKey, canvasId, titleId, range, factoryKey, product, metric, sharedScale=null){
+  const titleEl = $(titleId);
+  if (titleEl) titleEl.textContent = `${range.label || '目前區間'}｜${dailyRangeText(range)}｜${shortFactoryName(factoryKey)}｜${product}`;
+  destroyChart(chartKey);
+  const canvas = $(canvasId);
+  const ctx = canvas?.getContext('2d');
+  if (!ctx || !window.Chart) return;
+  const rows = humanTrendRowsForProduct(factoryKey, range.start, range.end, product);
+  if (!rows.length){
+    state.charts[chartKey] = new Chart(ctx,{type:'line',data:{labels:[],datasets:[]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:'查無商品趨勢資料'}},scales:{y:{beginAtZero:true}}}});
+    return;
+  }
+  const labels = rows.map(r => fmtDailyDate(r.date));
+  const values = humanTrendValuesByMetric(rows, metric);
+  const yScale = { beginAtZero:false };
+  if (sharedScale && Number.isFinite(sharedScale.min) && Number.isFinite(sharedScale.max)) {
+    yScale.min = sharedScale.min;
+    yScale.max = sharedScale.max;
+  }
+  state.charts[chartKey] = new Chart(ctx,{type:'line',data:{labels,datasets:[{label:humanDailyMetricLabel(metric),data:values,borderColor:FACTORIES[factoryKey]?.color || '#2563eb',backgroundColor:'transparent',tension:0.2}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:true},tooltip:{callbacks:{label:c=>` ${humanDailyMetricLabel(metric)}：${humanDailyMetricText({totalQty:c.parsed.y, peopleAct:c.parsed.y, capacity:c.parsed.y, efficiency:c.parsed.y, runMin:c.parsed.y, changeMin:c.parsed.y}, metric)}`}}},scales:{y:yScale}}});
+}
+function renderHumanDailyTrendSection(data, rows){
+  const wrap = $("humanDailyTrendSection");
+  if (!wrap) return;
+  wrap.classList.remove('hidden');
+  const sel = $("humanDailyTrendMetric");
+  const hstate = ensureHumanDailyState();
+  if (sel && !sel.dataset.bound){
+    sel.innerHTML = HUMAN_DAILY_TREND_OPTIONS.map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+    sel.dataset.bound = '1';
+  }
+  if (sel) sel.value = hstate.metric;
+  const q = normalizeDailySearch(getDailyDetailState().query || "");
+  const exactRow = (rows || []).find(r => q && normalizeDailySearch(r.product) === q) || rows[0];
+  if (!exactRow){
+    if ($("humanPrevTrendTitle")) $("humanPrevTrendTitle").textContent = '前期趨勢圖';
+    if ($("humanCurTrendTitle")) $("humanCurTrendTitle").textContent = '目前區間趨勢圖';
+    destroyChart('humanDailyPrev'); destroyChart('humanDailyCur');
+    const prevCtx = $("humanPrevTrendChart")?.getContext('2d');
+    const curCtx = $("humanCurTrendChart")?.getContext('2d');
+    const emptyOpts = {responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:'請先在上方搜尋或點選商品名'}},scales:{y:{beginAtZero:true}}};
+    if (prevCtx && window.Chart) state.charts.humanDailyPrev = new Chart(prevCtx,{type:'line',data:{labels:[],datasets:[]},options:emptyOpts});
+    if (curCtx && window.Chart) state.charts.humanDailyCur = new Chart(curCtx,{type:'line',data:{labels:[],datasets:[]},options:emptyOpts});
+    return;
+  }
+  const prev = getPreviousDateRange(data.start, data.end);
+  const prevRange = { ...(prev || {start:data.start,end:data.end,label:'前期'}) };
+  const curRange = { start:data.start,end:data.end,label:'目前區間' };
+  const prevRows = humanTrendRowsForProduct(exactRow.factoryKey, prevRange.start, prevRange.end, exactRow.product);
+  const curRows = humanTrendRowsForProduct(exactRow.factoryKey, curRange.start, curRange.end, exactRow.product);
+  const sharedScale = humanSharedTrendScale(hstate.metric, prevRows, curRows);
+  renderHumanDailyTrendChart('humanDailyPrev','humanPrevTrendChart','humanPrevTrendTitle',prevRange, exactRow.factoryKey, exactRow.product, hstate.metric, sharedScale);
+  renderHumanDailyTrendChart('humanDailyCur','humanCurTrendChart','humanCurTrendTitle',curRange, exactRow.factoryKey, exactRow.product, hstate.metric, sharedScale);
+}
+function renderHumanDailyDetailCard(data){
+  const ds = getDailyDetailState();
+  renderDailyFactoryOptions();
+  if ($('dailyDetailTitle')) $('dailyDetailTitle').textContent = '日別明細總覽';
+  if ($('dailyDetailSub')) $('dailyDetailSub').textContent = '可依目前選擇區間檢視各廠商品日別明細，並可展開前段期間比較';
+  if ($('dailyDetailMainLabel')) $('dailyDetailMainLabel').innerHTML = '<span class="font-medium">日別明細</span><span class="muted">（依日期排序）</span>';
+  if ($('dailySearchLabel')) $('dailySearchLabel').textContent = '商品名搜尋（輸入關鍵字）';
+  const search = $('dailySemiSearch');
+  if (search){ search.placeholder = '例如：飯糰、義大利麵、燴飯'; if (search.value !== (ds.query || '')) search.value = ds.query || ''; }
+  const rangeLabel = $('dailyDetailRangeLabel');
+  const curText = `目前區間：${dailyRangeText({start:data.start,end:data.end})}`;
+  const prev = getPreviousDateRange(data.start, data.end);
+  if (rangeLabel) rangeLabel.textContent = ds.prevExpanded && prev ? `前段：${dailyRangeText(prev)}` : curText;
+  const prevBtn = $('dailyPrevBtn');
+  if (prevBtn) { prevBtn.classList.toggle('active', !!ds.prevExpanded); prevBtn.textContent = ds.prevExpanded ? '收合前段明細' : '前段明細展開'; }
+  const expandBtn = $('dailyExpandBtn'); if (expandBtn) expandBtn.classList.add('hidden');
+  const rateBtn = $('dailyRateBtn'); if (rateBtn) rateBtn.classList.add('hidden');
+  const rows = buildHumanDailyDetailRows(data);
+  const cols = renderHumanDailyDetailHeader();
+  const colCount = cols.length || 1;
+  const count = $('dailyDetailCount'); if (count) count.textContent = `${rows.length.toLocaleString('zh-TW')} 筆${rows.length > 500 ? '（顯示前 500 筆）' : ''}`;
+  renderHumanDailySuggestions(data);
+  const tbody = $('dailyDetailTbody'); if (!tbody) return;
+  if (!data.slots?.length){ tbody.innerHTML = `<tr><td colspan="${colCount}" class="muted">請先選擇工廠。</td></tr>`; renderHumanDailyTrendSection(data, []); return; }
+  if (!rows.length){ tbody.innerHTML = `<tr><td colspan="${colCount}" class="muted">${(ds.query || '') ? '目前條件找不到商品日別明細。' : '目前區間無商品日別明細。'}</td></tr>`; renderHumanDailyTrendSection(data, []); return; }
+  const visibleRows = rows.slice(0,500);
+  const pieces = [];
+  let lastRangeKey = null, lastRangeMeta = null;
+  for (const r of visibleRows){
+    const rangeKey = `${r.rangeLabel || '目前區間'}|${r.rangeStart || ''}|${r.rangeEnd || ''}`;
+    if (ds.prevExpanded){
+      const curMeta = { label: escapeHTML(r.rangeLabel || '目前區間'), span: escapeHTML(dailyRangeText({start:r.rangeStart,end:r.rangeEnd})) };
+      if (lastRangeKey !== null && rangeKey !== lastRangeKey) pieces.push(`<tr class="daily-range-separator"><td colspan="${colCount}">以上：${lastRangeMeta.label}｜${lastRangeMeta.span}　／　以下：${curMeta.label}｜${curMeta.span}</td></tr>`);
+      lastRangeKey = rangeKey; lastRangeMeta = curMeta;
+    }
+    pieces.push(`<tr>${cols.map(c => `<td${c.cls ? ` class="${c.cls}"` : ''}>${c.cell(r)}</td>`).join('')}</tr>`);
+  }
+  tbody.innerHTML = pieces.join('');
+  renderHumanDailyTrendSection(data, rows);
+}
+
 function renderDailyDetailCard(data){
+  if (state.queryType === "human") return renderHumanDailyDetailCard(data || currentData());
   syncOveruseMetricControls(data);
   const dailyState = getDailyDetailState();
   renderDailyFactoryOptions();
+  if ($('dailyDetailTitle')) $('dailyDetailTitle').textContent = '日別明細總覽';
+  if ($('dailyDetailSub')) $('dailyDetailSub').textContent = '可依目前選擇區間檢視各廠半成品日別明細，並可展開前段期間比較';
+  if ($('dailyDetailMainLabel')) $('dailyDetailMainLabel').innerHTML = '<span class="font-medium">日別明細</span><span class="muted">（依日期排序）</span>';
+  if ($('dailySearchLabel')) $('dailySearchLabel').textContent = '半成品名搜尋（輸入關鍵字）';
+  if ($('humanDailyTrendSection')) $('humanDailyTrendSection').classList.add('hidden');
+  const expandBtnVisible = $('dailyExpandBtn'); if (expandBtnVisible) expandBtnVisible.classList.remove('hidden');
+  const rateBtnVisible = $('dailyRateBtn'); if (rateBtnVisible) rateBtnVisible.classList.remove('hidden');
 
   const curText = `目前區間：${dailyRangeText({start:data.start,end:data.end})}`;
   const prev = getPreviousDateRange(data.start, data.end);
@@ -4002,7 +4356,19 @@ function wireUI(){
       if (common) {
         const key = common.dataset.commonTopSource;
         state.mirrorTopSource = state.mirrorTopSource === key ? null : key;
-        renderTopTables(currentData());
+        if (state.queryType === "human") renderHumanItemTables();
+        else renderTopTables(currentData());
+        return;
+      }
+      const humanProductBtn = ev.target.closest("[data-human-daily-product]");
+      if (humanProductBtn) {
+        state.dailyDetail = state.dailyDetail || { factory: "all", query: "", prevExpanded: false, expandView: false, rateView: false };
+        state.dailyDetail.query = humanProductBtn.dataset.humanDailyProduct || "";
+        state.dailyDetail.factory = humanProductBtn.dataset.humanDailyFactory || state.dailyDetail.factory;
+        const inp = $("dailySemiSearch"); if (inp) inp.value = state.dailyDetail.query;
+        renderDailyDetailCard(currentData());
+        const card = $("dailyDetailCard");
+        if (card) { card.scrollIntoView({behavior:"smooth", block:"start"}); card.classList.add("ring-2", "ring-slate-300"); clearTimeout(card._jumpTimer); card._jumpTimer = setTimeout(()=>card.classList.remove("ring-2", "ring-slate-300"), 1600); }
         return;
       }
       const direct = ev.target.closest("[data-top-semi]");
@@ -4249,8 +4615,7 @@ function humanPairTypeFromName(name){
   return /二配/.test(safeStr(name)) ? "二配" : "一配";
 }
 function humanParseDetailItemRows(grid, dateISO, temp="4"){
-  // 完全依單廠日報頁面的商品明細讀取方式：
-  // 生產量直接取「生產量」；若標準/實際欄重複，產能/時、人時性取第二組（實際），只有一組時取該組。
+  // 參考單廠日報讀取方式：商品明細直接取生產量、多次生產、人數、產能/時、人時性、換線/稼動時間。
   const hr = humanFindHeaderRowIndex(grid);
   if (hr < 0) return [];
   const header = grid[hr] || [];
@@ -4258,10 +4623,26 @@ function humanParseDetailItemRows(grid, dateISO, temp="4"){
   const idxCat = humanHeaderIndex(header, "品類");
   const idxProd = humanPickHeaderIndex(header, ["品名", "商品名", "商品名稱"]);
   const idxQty = humanHeaderIndex(header, "生產量");
+  const idxMulti = humanHeaderIndex(header, "多次");
+  const peopleList = humanHeaderIndicesExact(header, "人數");
   const capList = humanHeaderIndicesExact(header, "產能/時");
   const effList = humanHeaderIndicesExact(header, "人時性");
-  const idxCap = capList.length >= 2 ? capList[1] : (capList[0] ?? -1);
-  const idxEff = effList.length >= 2 ? effList[1] : (effList[0] ?? -1);
+  const idxPeopleStd = peopleList.length >= 2 ? peopleList[0] : -1;
+  const idxPeopleAct = peopleList.length >= 2 ? peopleList[1] : (peopleList[0] ?? -1);
+  const idxCapStd = capList.length >= 2 ? capList[0] : -1;
+  const idxCapAct = capList.length >= 2 ? capList[1] : (capList[0] ?? -1);
+  const idxEffStd = effList.length >= 2 ? effList[0] : -1;
+  const idxEffAct = effList.length >= 2 ? effList[1] : (effList[0] ?? -1);
+  let idxChange = humanHeaderIndex(header, "換線時間/分");
+  if (idxChange < 0) idxChange = humanHeaderIndex(header, "前置、換線時間/分");
+  if (idxChange < 0) idxChange = humanHeaderIndex(header, "換線/分");
+  if (idxChange < 0){
+    for (let c=0; c<header.length; c++){
+      const t = humanCleanText(header[c]);
+      if (t && t.includes("換線") && t.includes("分")) { idxChange = c; break; }
+    }
+  }
+  const idxRun = humanHeaderIndex(header, "稼動時間/分");
   if (idxLine < 0 || idxProd < 0) return [];
 
   const rows = [];
@@ -4271,10 +4652,7 @@ function humanParseDetailItemRows(grid, dateISO, temp="4"){
   for (let r=hr+1; r<(grid || []).length; r++){
     const row = grid[r] || [];
     const lineCell = safeStr(row[idxLine]).trim();
-    if (humanCleanText(lineCell)) {
-      currentLine = lineCell;
-      currentCat = "";
-    }
+    if (humanCleanText(lineCell)) { currentLine = lineCell; currentCat = ""; }
 
     const prod = safeStr(row[idxProd]).trim();
     const prodClean = humanCleanText(prod);
@@ -4292,8 +4670,15 @@ function humanParseDetailItemRows(grid, dateISO, temp="4"){
     if (idxCat >= 0 && (!currentCat || humanCleanKey(currentCat) === "0")) continue;
 
     const qty = idxQty >= 0 ? humanToNumber(row[idxQty]) : NaN;
-    const cap = idxCap >= 0 ? humanToNumber(row[idxCap]) : NaN;
-    const eff = idxEff >= 0 ? humanToNumber(row[idxEff]) : NaN;
+    const multi = idxMulti >= 0 ? humanToNumber(row[idxMulti]) : NaN;
+    const peopleStd = idxPeopleStd >= 0 ? humanToNumber(row[idxPeopleStd]) : NaN;
+    const peopleAct = idxPeopleAct >= 0 ? humanToNumber(row[idxPeopleAct]) : NaN;
+    const capStd = idxCapStd >= 0 ? humanToNumber(row[idxCapStd]) : NaN;
+    const capAct = idxCapAct >= 0 ? humanToNumber(row[idxCapAct]) : NaN;
+    const effStd = idxEffStd >= 0 ? humanToNumber(row[idxEffStd]) : NaN;
+    const effAct = idxEffAct >= 0 ? humanToNumber(row[idxEffAct]) : NaN;
+    const changeMin = idxChange >= 0 ? humanToNumber(row[idxChange]) : NaN;
+    const runMin = idxRun >= 0 ? humanToNumber(row[idxRun]) : NaN;
 
     rows.push({
       date: dateISO,
@@ -4303,15 +4688,22 @@ function humanParseDetailItemRows(grid, dateISO, temp="4"){
       product: prod,
       pairType: humanPairTypeFromName(prod),
       totalQty: Number.isFinite(qty) ? qty : null,
-      capacity: Number.isFinite(cap) ? cap : null,
-      efficiency: Number.isFinite(eff) ? eff : null
+      multi: Number.isFinite(multi) ? multi : null,
+      peopleStd: Number.isFinite(peopleStd) ? peopleStd : null,
+      peopleAct: Number.isFinite(peopleAct) ? peopleAct : null,
+      capacityStd: Number.isFinite(capStd) ? capStd : null,
+      capacity: Number.isFinite(capAct) ? capAct : null,
+      efficiencyStd: Number.isFinite(effStd) ? effStd : null,
+      efficiency: Number.isFinite(effAct) ? effAct : null,
+      changeMin: Number.isFinite(changeMin) ? changeMin : null,
+      runMin: Number.isFinite(runMin) ? runMin : null
     });
   }
   return rows;
 }
 function humanItemRowCompleteness(row){
   if (!row) return -1;
-  return ["line","group","product","totalQty","capacity","efficiency"]
+  return ["line","group","product","totalQty","multi","peopleStd","peopleAct","capacityStd","capacity","efficiencyStd","efficiency","changeMin","runMin"]
     .reduce((score,k)=> score + (row[k] !== null && row[k] !== undefined && row[k] !== "" ? 1 : 0), 0);
 }
 function humanMergeItemRow(a, b){
@@ -4322,7 +4714,7 @@ function humanMergeItemRow(a, b){
   for (const k of ["line","group","product","pairType"]){
     if (!base[k]) base[k] = b[k] || a[k] || "";
   }
-  for (const k of ["totalQty","capacity","efficiency"]){
+  for (const k of ["totalQty","multi","peopleStd","peopleAct","capacityStd","capacity","efficiencyStd","efficiency","changeMin","runMin"]){
     if (!humanHasFiniteValue(base[k])) {
       if (humanHasFiniteValue(b[k])) base[k] = Number(b[k]);
       else if (humanHasFiniteValue(a[k])) base[k] = Number(a[k]);
@@ -5215,8 +5607,7 @@ function humanAggregateSeries(rows, metric, gran){
   const labels=keys.map(k=>{
     if (gran === "month") return `${Number(k.slice(5,7))}月`;
     if (gran === "week"){
-      const s=parseISO(k),e=addDays(s,6);
-      return `${fmtMMDD(s)}~${fmtMMDD(e)}`;
+      return state.mode === "month" ? clippedWeekLabelForMonth(k) : (()=>{ const s=parseISO(k),e=addDays(s,6); return `${fmtMMDD(s)}~${fmtMMDD(e)}`; })();
     }
     return k.slice(5);
   });
@@ -5560,10 +5951,7 @@ function humanItemRowsForRange(key, start, end){
     .filter(r => String(r?.temp || "4") === temp);
 }
 function humanItemCurrentCompareRange(){
-  if (state.mode === "month") {
-    const wk = getWholeWeekRangeForMonth($("yearSel")?.value, $("monthSel")?.value);
-    if (wk) return wk;
-  }
+  // 月別商品比較只使用所選曆月，不再向前／向後延伸成完整週。
   return getDateRange();
 }
 function humanItemPreviousCompareRange(){
@@ -5576,8 +5964,8 @@ function humanItemPreviousCompareRange(){
   if (state.mode === "month") {
     let y = Number($("yearSel")?.value), m = Number($("monthSel")?.value) - 1;
     if (m <= 0){ m = 12; y -= 1; }
-    const wk = getWholeWeekRangeForMonth(y, String(m).padStart(2,"0"));
-    return wk ? {...wk,label:"前月"} : {start:null,end:null,label:"前月"};
+    const mm = String(m).padStart(2,"0");
+    return {start:`${y}-${mm}-01`, end:toISO(new Date(y,m,0)), label:"前月"};
   }
   if (state.mode === "week") {
     const s = parseISO(cur.start), e = parseISO(cur.end);
@@ -5663,20 +6051,104 @@ function humanItemMetricValueText(row, metric){
   else {prev=row.effPrev;cur=row.effCur;}
   return `<div class="font-bold">${fmt(v)}</div><div class="text-[11px] muted whitespace-nowrap">${row.prevLabel||"前期"}→現：${fmt(prev)} → ${fmt(cur)}</div>`;
 }
+function humanItemOrderFromRows(rows){
+  return (rows || []).map(r => ({
+    productKey: humanCleanKey(r.product),
+    productLabel: r.product || "—"
+  }));
+}
+function humanRenderRowsByProductOrder(rows, order){
+  const targetRows = rows || [];
+  const assignments = new Map();
+  const usedTargetIndexes = new Set();
+  const candidates = [];
+  for (let sourceIndex = 0; sourceIndex < (order || []).length; sourceIndex++){
+    const item = order[sourceIndex];
+    for (let targetIndex = 0; targetIndex < targetRows.length; targetIndex++){
+      const target = targetRows[targetIndex];
+      const productMatch = commonProductMatchInfo(item.productKey, target.product);
+      if (!productMatch) continue;
+      candidates.push({
+        sourceIndex,
+        targetIndex,
+        target,
+        productMatch,
+        exact: productMatch.exact,
+        consecutive: productMatch.consecutive,
+        commonChars: productMatch.commonChars,
+        similarity: productMatch.similarity
+      });
+    }
+  }
+  candidates.sort((a, b) =>
+    Number(b.exact) - Number(a.exact) ||
+    b.consecutive - a.consecutive ||
+    b.commonChars - a.commonChars ||
+    b.similarity - a.similarity ||
+    a.sourceIndex - b.sourceIndex ||
+    a.targetIndex - b.targetIndex
+  );
+  for (const candidate of candidates){
+    if (assignments.has(candidate.sourceIndex) || usedTargetIndexes.has(candidate.targetIndex)) continue;
+    assignments.set(candidate.sourceIndex, candidate.target);
+    usedTargetIndexes.add(candidate.targetIndex);
+  }
+  return (order || []).map((item, sourceIndex) => {
+    const matched = assignments.get(sourceIndex);
+    if (matched) return matched;
+    return {
+      product: item.productLabel || "無該商品",
+      line: "—",
+      qtyDown: null, capDown: null, effDown: null,
+      qtyUp: null, capUp: null, effUp: null,
+      qtyPrev: null, qtyCur: null, capPrev: null, capCur: null, effPrev: null, effCur: null,
+      prevLabel: humanItemPreviousCompareRange().label,
+      exists: false
+    };
+  });
+}
 function renderHumanItemTables(){
   const grid=$("topTablesGrid"); if(!grid)return;
   const keys=selectedFactoryKeys();
   if(!keys.length){grid.innerHTML=`<div class="card p-4 muted">請先選擇工廠後查看人時性商品對照表。</div>`;return;}
-  grid.innerHTML=keys.map(key=>{
-    const setting=getHumanItemTableSetting(key), compareRows=humanBuildCompareItems(key);
-    const groupValues=Array.from(new Set(compareRows.map(r=>safeStr(r.group).trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'zh-Hant'));
+  if (keys.length !== 2 && state.mirrorTopSource) state.mirrorTopSource = null;
+
+  const config = keys.map((key, idx) => {
+    const setting = getHumanItemTableSetting(key);
+    const compareRows = humanBuildCompareItems(key);
+    const groupValues = Array.from(new Set(compareRows.map(r=>safeStr(r.group).trim()).filter(Boolean))).sort((a,b)=>a.localeCompare(b,'zh-Hant'));
     if(setting.groupFilter!=="all"&&!groupValues.includes(setting.groupFilter))setting.groupFilter="all";
-    const rows=humanSortItemRows(humanApplyItemFilters(compareRows,setting),setting.metric), opt=humanItemTableOption(setting.metric);
-    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${escapeHTML(r.product||"—")}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${humanItemMetricValueText(r,setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">目前範圍無符合條件的上一期比較資料</td></tr>`;
-    return `<div class="card p-4" data-human-item-card="${key}"><div class="flex flex-wrap items-center justify-between gap-3 mb-3"><div><div class="text-sm font-bold">${HUMAN_FACTORIES[key].name}｜人時性商品對照表</div><div class="text-xs muted mt-1">依單廠日報邏輯：生產量採期間加總；產能、人時性採實際值平均，與前一時間範圍比較</div></div><div class="flex flex-wrap gap-2"><select data-human-item-select="group" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemGroupOptionsHTML(groupValues,setting.groupFilter)}</select><select data-human-item-select="pair" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemPairOptionsHTML(setting.pairFilter)}</select><select data-human-item-select="metric" data-human-item-factory="${key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemMetricOptionsHTML(setting.metric)}</select></div></div><div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white"><table><thead><tr><th>#</th><th>商品名</th><th>線別</th><th class="text-right">${escapeHTML(opt.header)}</th></tr></thead><tbody>${rowHtml}</tbody></table></div></div>`;
+    const filtered = humanApplyItemFilters(compareRows,setting);
+    const rows = humanSortItemRows(filtered,setting.metric);
+    return { idx, key, setting, compareRows, groupValues, rows };
+  });
+
+  let sourceCfg = null;
+  let sourceRows = null;
+  let sourceOrder = null;
+  if (keys.length === 2 && state.mirrorTopSource) {
+    sourceCfg = config.find(c => c.key === state.mirrorTopSource) || null;
+    if (sourceCfg) {
+      sourceRows = sourceCfg.rows;
+      sourceOrder = humanItemOrderFromRows(sourceRows);
+    }
+  }
+
+  grid.innerHTML=config.map(cfg=>{
+    const opt=humanItemTableOption(cfg.setting.metric);
+    const rows = (sourceCfg && sourceOrder)
+      ? (cfg.key === sourceCfg.key ? sourceRows : humanRenderRowsByProductOrder(cfg.rows, sourceOrder))
+      : cfg.rows;
+    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${r.exists===false ? escapeHTML(r.product||"—") : `<button type="button" class="text-left hover:underline hover:text-slate-900" data-human-daily-product="${escapeHTML(r.product||"")}" data-human-daily-factory="${cfg.key}">${escapeHTML(r.product||"—")}</button>`}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${r.exists===false?"—":humanItemMetricValueText(r,cfg.setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">${sourceCfg?"目前範圍無可對照商品資料":"目前範圍無符合條件的上一期比較資料"}</td></tr>`;
+    const otherKey = keys.length === 2 ? keys.find(k => k !== cfg.key) : null;
+    const commonBtn = otherKey
+      ? `<button type="button" class="seg-btn ${state.mirrorTopSource === cfg.key ? "active" : ""}" data-common-top-source="${cfg.key}" title="讓另一個工廠依照本表商品排序顯示">${HUMAN_FACTORIES[otherKey].name}共有</button>`
+      : "";
+    return `<div class="card p-4" data-human-item-card="${cfg.key}"><div class="flex flex-wrap items-center justify-between gap-3 mb-3"><div><div class="text-sm font-bold">${HUMAN_FACTORIES[cfg.key].name}｜人時性商品對照表</div><div class="text-xs muted mt-1">依單廠日報邏輯：生產量採期間加總；產能、人時性採實際值平均，與前一時間範圍比較</div></div><div class="flex flex-wrap gap-2"><select data-human-item-select="group" data-human-item-factory="${cfg.key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemGroupOptionsHTML(cfg.groupValues,cfg.setting.groupFilter)}</select><select data-human-item-select="pair" data-human-item-factory="${cfg.key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemPairOptionsHTML(cfg.setting.pairFilter)}</select><select data-human-item-select="metric" data-human-item-factory="${cfg.key}" class="rounded-xl border border-slate-200 px-3 py-2 bg-white text-sm">${humanItemMetricOptionsHTML(cfg.setting.metric)}</select>${commonBtn}</div></div><div class="overflow-auto max-h-[420px] rounded-xl border border-slate-200 bg-white"><table><thead><tr><th>#</th><th>商品名</th><th>線別</th><th class="text-right">${escapeHTML(opt.header)}</th></tr></thead><tbody>${rowHtml}</tbody></table></div></div>`;
   }).join("");
 }
 async function ensureHumanItemDataForCurrentSelection(){
+
   const selected=selectedFactoryKeys(); if(!selected.length)return;
   const cur=humanItemCurrentCompareRange(), prev=humanItemPreviousCompareRange();
   const monthKeys=Array.from(new Set([...monthKeysBetween(cur.start,cur.end),...(prev.start?monthKeysBetween(prev.start,prev.end):[])])).sort();
@@ -5693,6 +6165,7 @@ function renderHumanEmpty(){
   }
   renderHumanCompareTable();
   renderHumanItemTables();
+  renderDailyDetailCard(currentData());
 }
 
 function setMetricOptionsForQuery(){
@@ -5722,7 +6195,7 @@ function applyQueryTypeView(){
   if ($("dataSourceNote")) $("dataSourceNote").innerHTML=human
     ? `人時性資料來源：晉欣、大溪、新豐日報站的 <code>data/manifest.json</code>，長家日報站的 <code>data/manifest_changjia.json</code> 及其列出的 Excel；切換人時性時優先載入四廠近 3 個月資料，完成後自動於背景載入其餘月份；背景載入採單檔、閒置時解析與延後去重，降低操作期間卡頓。`
     : `資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。`;
-  const halfOnly=["barCard","dailyDetailCard"];
+  const halfOnly=["barCard"];
   halfOnly.forEach(id=>{const el=$(id);if(el)el.classList.toggle("hidden",human);});
   if (human) destroyChart("bar");
   setMetricOptionsForQuery();
@@ -5800,6 +6273,7 @@ renderAll = async function(){
   renderHumanTrend();
   renderHumanCompareTable();
   renderHumanItemTables();
+  renderDailyDetailCard(currentData());
 };
 
 loadAll = async function(){
@@ -5870,6 +6344,8 @@ wireUI = function(){
     if (state.queryType === "human") state.humanMetricValue=metric.value;
     else state.halfMetricValue=metric.value;
   });
+  const humanDailyMetricSel = $("humanDailyTrendMetric");
+  if (humanDailyMetricSel) humanDailyMetricSel.addEventListener("change",()=>{ ensureHumanDailyState().metric = humanDailyMetricSel.value; renderDailyDetailCard(currentData()); });
   document.addEventListener("change", async (e) => {
     const sel = e.target;
     if (!(sel instanceof HTMLSelectElement)) return;
