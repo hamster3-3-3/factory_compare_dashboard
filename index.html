@@ -6052,8 +6052,8 @@ function humanItemMetricValueText(row, metric){
   return `<div class="font-bold">${fmt(v)}</div><div class="text-[11px] muted whitespace-nowrap">${row.prevLabel||"前期"}→現：${fmt(prev)} → ${fmt(cur)}</div>`;
 }
 function humanSharedItemMetricValueText(row, metric){
-  if (row?.exists === false) return `<div class="font-bold">無此商品</div>`;
   const opt=humanItemTableOption(metric);
+  if (row?.exists === false) return `<div class="font-bold">無此商品</div><div class="text-[11px] muted whitespace-nowrap">${row.prevLabel||"前期"}→現：— → —</div>`;
   let prev=NaN, cur=NaN;
   if(opt.metric==="qty"){prev=row.qtyPrev;cur=row.qtyCur;}
   else if(opt.metric==="cap"){prev=row.capPrev;cur=row.capCur;}
@@ -6109,9 +6109,10 @@ function humanRenderRowsByProductOrder(rows, order){
   }
   return (order || []).map((item, sourceIndex) => {
     const matched = assignments.get(sourceIndex);
-    if (matched) return matched;
+    if (matched) return {...matched, displayProduct:item.productLabel||matched.product};
     return {
       product: item.productLabel || "無該商品",
+      displayProduct: item.productLabel || "無該商品",
       line: "—",
       qtyDown: null, capDown: null, effDown: null,
       qtyUp: null, capUp: null, effUp: null,
@@ -6154,7 +6155,7 @@ function renderHumanItemTables(){
     const rows = (sourceCfg && sourceOrder)
       ? (cfg.key === sourceCfg.key ? sourceRows : humanRenderRowsByProductOrder(cfg.filtered, sourceOrder))
       : cfg.rows;
-    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${r.exists===false ? escapeHTML(r.product||"—") : `<button type="button" class="text-left hover:underline hover:text-slate-900" data-human-daily-product="${escapeHTML(r.product||"")}" data-human-daily-factory="${cfg.key}">${escapeHTML(r.product||"—")}</button>`}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${isMirrorTarget?humanSharedItemMetricValueText(r,cfg.setting.metric):humanItemMetricValueText(r,cfg.setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">${sourceCfg?"目前範圍無可對照商品資料":"目前範圍無符合條件的上一期比較資料"}</td></tr>`;
+    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${r.exists===false ? escapeHTML(r.displayProduct||r.product||"—") : `<button type="button" class="text-left hover:underline hover:text-slate-900" data-human-daily-product="${escapeHTML(r.product||"")}" data-human-daily-factory="${cfg.key}">${escapeHTML(r.displayProduct||r.product||"—")}</button>`}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${isMirrorTarget?humanSharedItemMetricValueText(r,cfg.setting.metric):humanItemMetricValueText(r,cfg.setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">${sourceCfg?"目前範圍無可對照商品資料":"目前範圍無符合條件的上一期比較資料"}</td></tr>`;
     const otherKey = keys.length === 2 ? keys.find(k => k !== cfg.key) : null;
     const commonBtn = otherKey
       ? `<button type="button" class="seg-btn ${state.mirrorTopSource === cfg.key ? "active" : ""}" data-common-top-source="${cfg.key}" title="讓另一個工廠依照本表商品排序顯示">${HUMAN_FACTORIES[otherKey].name}共有</button>`
