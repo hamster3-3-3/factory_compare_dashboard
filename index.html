@@ -6051,6 +6051,20 @@ function humanItemMetricValueText(row, metric){
   else {prev=row.effPrev;cur=row.effCur;}
   return `<div class="font-bold">${fmt(v)}</div><div class="text-[11px] muted whitespace-nowrap">${row.prevLabel||"前期"}→現：${fmt(prev)} → ${fmt(cur)}</div>`;
 }
+function humanSharedItemMetricValueText(row, metric){
+  if (row?.exists === false) return `<div class="font-bold">無此商品</div>`;
+  const opt=humanItemTableOption(metric);
+  let prev=NaN, cur=NaN;
+  if(opt.metric==="qty"){prev=row.qtyPrev;cur=row.qtyCur;}
+  else if(opt.metric==="cap"){prev=row.capPrev;cur=row.capCur;}
+  else {prev=row.effPrev;cur=row.effCur;}
+  const fmt=(x)=>opt.metric==="qty"?fmtDailyQty(x):humanMetricFormat("efficiency",x);
+  const change=Number(row?.[metric]);
+  const status=Number.isFinite(change)&&change>0
+    ? fmt(change)
+    : (opt.direction==="down"?"無下滑":"無上升");
+  return `<div class="font-bold">${status}</div><div class="text-[11px] muted whitespace-nowrap">${row.prevLabel||"前期"}→現：${fmt(prev)} → ${fmt(cur)}</div>`;
+}
 function humanItemOrderFromRows(rows){
   return (rows || []).map(r => ({
     productKey: humanCleanKey(r.product),
@@ -6120,7 +6134,7 @@ function renderHumanItemTables(){
     if(setting.groupFilter!=="all"&&!groupValues.includes(setting.groupFilter))setting.groupFilter="all";
     const filtered = humanApplyItemFilters(compareRows,setting);
     const rows = humanSortItemRows(filtered,setting.metric);
-    return { idx, key, setting, compareRows, groupValues, rows };
+    return { idx, key, setting, compareRows, filtered, groupValues, rows };
   });
 
   let sourceCfg = null;
@@ -6136,10 +6150,11 @@ function renderHumanItemTables(){
 
   grid.innerHTML=config.map(cfg=>{
     const opt=humanItemTableOption(cfg.setting.metric);
+    const isMirrorTarget=!!(sourceCfg && sourceOrder && cfg.key !== sourceCfg.key);
     const rows = (sourceCfg && sourceOrder)
-      ? (cfg.key === sourceCfg.key ? sourceRows : humanRenderRowsByProductOrder(cfg.rows, sourceOrder))
+      ? (cfg.key === sourceCfg.key ? sourceRows : humanRenderRowsByProductOrder(cfg.filtered, sourceOrder))
       : cfg.rows;
-    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${r.exists===false ? escapeHTML(r.product||"—") : `<button type="button" class="text-left hover:underline hover:text-slate-900" data-human-daily-product="${escapeHTML(r.product||"")}" data-human-daily-factory="${cfg.key}">${escapeHTML(r.product||"—")}</button>`}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${r.exists===false?"—":humanItemMetricValueText(r,cfg.setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">${sourceCfg?"目前範圍無可對照商品資料":"目前範圍無符合條件的上一期比較資料"}</td></tr>`;
+    const rowHtml=rows.map((r,idx)=>`<tr><td class="mono">${idx+1}</td><td>${r.exists===false ? escapeHTML(r.product||"—") : `<button type="button" class="text-left hover:underline hover:text-slate-900" data-human-daily-product="${escapeHTML(r.product||"")}" data-human-daily-factory="${cfg.key}">${escapeHTML(r.product||"—")}</button>`}</td><td>${escapeHTML(r.line||"—")}</td><td class="text-right mono">${isMirrorTarget?humanSharedItemMetricValueText(r,cfg.setting.metric):humanItemMetricValueText(r,cfg.setting.metric)}</td></tr>`).join("")||`<tr><td colspan="4" class="muted">${sourceCfg?"目前範圍無可對照商品資料":"目前範圍無符合條件的上一期比較資料"}</td></tr>`;
     const otherKey = keys.length === 2 ? keys.find(k => k !== cfg.key) : null;
     const commonBtn = otherKey
       ? `<button type="button" class="seg-btn ${state.mirrorTopSource === cfg.key ? "active" : ""}" data-common-top-source="${cfg.key}" title="讓另一個工廠依照本表商品排序顯示">${HUMAN_FACTORIES[otherKey].name}共有</button>`
