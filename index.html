@@ -4149,7 +4149,7 @@ function renderHumanDailyTrendChart(chartKey, canvasId, titleId, range, factoryK
     yScale.min = sharedScale.min;
     yScale.max = sharedScale.max;
   }
-  state.charts[chartKey] = new Chart(ctx,{type:'line',data:{labels,datasets:[{label:humanDailyMetricLabel(metric),data:values,borderColor:FACTORIES[factoryKey]?.color || '#2563eb',backgroundColor:'transparent',tension:0.2}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:true},tooltip:{callbacks:{label:c=>` ${humanDailyMetricLabel(metric)}：${humanDailyMetricText({totalQty:c.parsed.y, peopleAct:c.parsed.y, capacity:c.parsed.y, efficiency:c.parsed.y, runMin:c.parsed.y, changeMin:c.parsed.y}, metric)}`}}},scales:{y:yScale}}});
+  state.charts[chartKey] = new Chart(ctx,{type:'line',data:{labels,datasets:[{label:humanDailyMetricLabel(metric),data:values,borderColor:FACTORIES[factoryKey]?.color || '#2563eb',backgroundColor:'transparent',tension:0.2}]},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{display:true},tooltip:{callbacks:{label:c=>` ${humanDailyMetricLabel(metric)}：${humanDailyMetricText({totalQty:c.parsed.y, peopleAct:c.parsed.y, capacity:c.parsed.y, efficiency:c.parsed.y, runMin:c.parsed.y, changeMin:c.parsed.y}, metric)}`}}},scales:{x:{ticks:{minRotation:0,maxRotation:0,autoSkip:true}},y:yScale}}});
 }
 function renderHumanDailyTrendSection(data, rows){
   const wrap = $("humanDailyTrendSection");
