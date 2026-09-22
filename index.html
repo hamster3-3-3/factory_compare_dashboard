@@ -6,7 +6,6 @@
   <title>鮮食廠半成品對比 Dashboard</title>
   <link rel="icon" href="data:," />
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="./xlsx.full.min.js"></script>
   <script src="./chart.umd.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&display=swap');
@@ -436,7 +435,7 @@
     </section>
 
     <p id="dataSourceNote" class="muted text-xs mt-4 leading-relaxed">
-      資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
+      資料讀取來源：優先使用新豐、大溪、長家、晉欣原網站自動產生的 <code>data/json-manifest.json</code> 與精簡 JSON；若 JSON 尚未產生或版本不符，才回退讀取 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
 
     <section class="card p-5 mt-4" id="analysisReportSection">
@@ -754,11 +753,8 @@ function syncOveruseMetricControls(data=null){
 }
 
 async function ensureLibs(){
-  // 兩套互不相依的函式庫平行下載，縮短第一次開啟的等待時間。
-  await Promise.all([
-    window.XLSX ? Promise.resolve() : loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"),
-    window.Chart ? Promise.resolve() : loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js")
-  ]);
+  // JSON 模式不需要 SheetJS；只有 JSON 不存在、必須回退 Excel 時才延遲載入。
+  await (window.Chart ? Promise.resolve() : loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"));
 }
 function loadScript(src){
   window.__dashboardScriptPromises = window.__dashboardScriptPromises || new Map();
@@ -782,8 +778,34 @@ async function fetchJSON(url){
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   return await r.json();
 }
+const dashboardJsonPayloadCache = new Map();
+let xlsxLibraryPromise = null;
+async function ensureXlsxLibrary(){
+  if (window.XLSX) return;
+  if (!xlsxLibraryPromise){
+    xlsxLibraryPromise = loadScript("./xlsx.full.min.js")
+      .catch(() => loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"));
+  }
+  await xlsxLibraryPromise;
+  if (!window.XLSX) throw new Error("SheetJS 載入失敗");
+}
+async function fetchDashboardJson(baseUrl, entry){
+  if (!entry || !entry.json) throw new Error("JSON 索引缺少檔案路徑");
+  const cacheKey = `${baseUrl}|${entry.json}|${entry.sourceSha256 || entry.parserHash || ""}`;
+  if (dashboardJsonPayloadCache.has(cacheKey)) return dashboardJsonPayloadCache.get(cacheKey);
+  const version = encodeURIComponent(entry.sourceSha256 || entry.parserHash || "");
+  const url = baseUrl + encodePath(entry.json) + (version ? `?v=${version}` : "");
+  const r = await fetch(url, {cache:"force-cache"});
+  if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
+  const payload = await r.json();
+  if (entry.sourceSha256 && payload.sourceSha256 !== entry.sourceSha256) throw new Error("JSON 來源版本不符");
+  if (entry.parserHash && payload.parserHash !== entry.parserHash) throw new Error("JSON 解析版本不符");
+  dashboardJsonPayloadCache.set(cacheKey, payload);
+  return payload;
+}
 async function fetchWorkbook(url){
   // Excel 檔名通常含日期且不會覆寫；允許瀏覽器快取可大幅加速再次開啟與切換月份。
+  await ensureXlsxLibrary();
   const r = await fetch(url, {cache:"force-cache"});
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   const ab = await r.arrayBuffer();
@@ -1627,12 +1649,27 @@ async function loadFactoryFiles(key, files, options={}){
     target.loadingFiles.add(p);
     const job = (async () => {
       try{
-        const wb = await fetchWorkbook(factory.baseUrl + "data/" + encodePath(p));
-        target.summary.push(...parseSummaryFromWB(wb, p));
-        target.details.push(...parseDetailsFromWB(wb, p));
+        const jsonEntry = target.jsonManifest?.files?.[p];
+        let loadedFromJson = false;
+        if (jsonEntry){
+          try{
+            const payload = await fetchDashboardJson(factory.baseUrl, jsonEntry);
+            if (!Array.isArray(payload.summary) || !Array.isArray(payload.details)) throw new Error("半成品 JSON 欄位不完整");
+            target.summary.push(...payload.summary);
+            target.details.push(...payload.details);
+            loadedFromJson = true;
+          }catch(jsonError){
+            console.warn("half JSON failed; fallback to Excel", key, p, jsonError);
+          }
+        }
+        if (!loadedFromJson){
+          const wb = await fetchWorkbook(factory.baseUrl + "data/" + encodePath(p));
+          target.summary.push(...parseSummaryFromWB(wb, p));
+          target.details.push(...parseDetailsFromWB(wb, p));
+        }
         target.loadedFiles.add(p);
         if (options.onFileDone) options.onFileDone(key, p, true);
-        return {file:p, ok:true};
+        return {file:p, ok:true, json:loadedFromJson};
       }catch(e){
         console.warn(key, p, e);
         target.errors.push(p);
@@ -1648,7 +1685,7 @@ async function loadFactoryFiles(key, files, options={}){
   });
 
   await Promise.all(jobs);
-  dedupeFactoryData(target);
+  if (!options.deferDedupe) dedupeFactoryData(target);
 }
 
 async function ensureDataForCurrentRange(){
@@ -1690,12 +1727,23 @@ function setDataStatus(message, options={}){
 
 async function loadFactory(key){
   const f = FACTORIES[key];
-  const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
+  let jsonManifest = null;
+  let files = [];
+  try{
+    jsonManifest = await fetchJSON(f.baseUrl + "data/json-manifest.json");
+    files = Object.keys(jsonManifest?.files || {}).filter(p => isLikelyFactoryWorkbook(key, p));
+  }catch(e){
+    console.warn("half JSON manifest unavailable; fallback to Excel manifest", key, e);
+  }
+  if (!files.length){
+    const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
+    files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
+  }
   return {
     summary: [],
     details: [],
     files,
+    jsonManifest,
     errors: [],
     loadedFiles: new Set(),
     loadingFiles: new Set(),
@@ -2707,7 +2755,7 @@ function selectedFactoryKeys(){
   return (state.selectedFactoryKeys || []).filter(k => FACTORIES[k]).slice(0, 4);
 }
 function slotKey(slot){ return selectedFactoryKeys()[slot] || null; }
-function emptyFactoryState(){ return { summary: [], details: [], files: [], errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() }; }
+function emptyFactoryState(){ return { summary: [], details: [], files: [], jsonManifest:null, errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() }; }
 
 function goSite(key){
   const f = FACTORIES[key];
@@ -2807,9 +2855,19 @@ async function toggleFactorySelection(key){
 
 async function loadFactory(key){
   const f = FACTORIES[key];
-  const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
-  const files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
-  return { summary: [], details: [], files, errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() };
+  let jsonManifest = null;
+  let files = [];
+  try{
+    jsonManifest = await fetchJSON(f.baseUrl + "data/json-manifest.json");
+    files = Object.keys(jsonManifest?.files || {}).filter(p => isLikelyFactoryWorkbook(key, p));
+  }catch(e){
+    console.warn("half JSON manifest unavailable; fallback to Excel manifest", key, e);
+  }
+  if (!files.length){
+    const manifest = await fetchJSON(f.baseUrl + "data/manifest.json");
+    files = (manifest.files || []).filter(p => isLikelyFactoryWorkbook(key, p));
+  }
+  return { summary: [], details: [], files, jsonManifest, errors: [], loadedFiles: new Set(), loadingFiles: new Set(), loadPromises: new Map() };
 }
 
 async function ensureFactoryIndex(key){
@@ -2834,7 +2892,7 @@ async function loadAll(){
   const libsPromise = ensureLibs();
 
   // 重整時保留目前勾選；初次進入仍預設不勾選任何工廠。
-  // 索引完成後立刻開放操作，Excel 改在背景依「近三個月優先」順序載入。
+  // 索引完成後立刻開放操作，資料只在使用者選擇期間時按需載入。
   const keepSelected = selectedFactoryKeys();
   for (const key of allFactoryKeys()) state.factories[key] = emptyFactoryState();
 
@@ -2864,11 +2922,11 @@ async function loadAll(){
   if (keepSelected.length) {
     await renderAll();
   } else {
-    renderEmptyState("資料索引已就緒；請選擇 1～4 個工廠進行對比。所選期間會優先載入，其餘資料會在背景持續載入。");
+    renderEmptyState("資料索引已就緒；請選擇 1～4 個工廠進行對比。系統只會載入目前選擇的期間。");
   }
-
-  // 不阻塞畫面；背景仍先讀近三個月，再讀其餘月份。
-  startBackgroundLoadAllFactories();
+  // 明確停用全歷史背景載入，避免使用網站時持續解析其他月份造成卡頓。
+  state.backgroundPreloadToken += 1;
+  state.backgroundPreload = { active:false, done:0, total:0 };
 }
 
 function buildGlobalDatesFromManifest(){
@@ -2948,14 +3006,21 @@ function buildSelectors(keep=null){
 
   const prevYear = keep?.year || ($("yearSel") ? $("yearSel").value : "");
   $("yearSel").innerHTML = state.years.map(y=>`<option value="${y}">${y}</option>`).join("");
-  const latestYear = (state.dateMax || toISO(new Date())).slice(0,4);
-  $("yearSel").value = state.years.includes(prevYear) ? prevYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1) || ""));
+  const now = new Date();
+  const systemYear = String(now.getFullYear());
+  const systemMonth = String(now.getMonth()+1).padStart(2,"0");
+  const latestYear = (state.dateMax || toISO(now)).slice(0,4);
+  const defaultYear = state.years.includes(systemYear) ? systemYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1) || ""));
+  $("yearSel").value = state.years.includes(prevYear) ? prevYear : defaultYear;
 
   renderMonthOptions();
   const prevMonth = keep?.month || ($("monthSel") ? $("monthSel").value : "");
   const months = state.monthsByYear[$("yearSel").value] || [];
   const latestMonth = (state.dateMax || "").slice(5,7);
-  $("monthSel").value = months.includes(prevMonth) ? prevMonth : (months.includes(latestMonth) ? latestMonth : (months.at(-1) || ""));
+  const defaultMonth = $("yearSel").value === systemYear && months.includes(systemMonth)
+    ? systemMonth
+    : (months.includes(latestMonth) ? latestMonth : (months.at(-1) || ""));
+  $("monthSel").value = months.includes(prevMonth) ? prevMonth : defaultMonth;
 
   renderWeekOptions();
   const weekOptions = Array.from($("weekSel").options).map(o => o.value);
@@ -2963,8 +3028,11 @@ function buildSelectors(keep=null){
   if (prevWeek && weekOptions.includes(prevWeek)) {
     $("weekSel").value = prevWeek;
   } else {
+    const todayISO = toISO(now);
+    const systemWeek = state.weeksAll.find(w => w.start <= todayISO && w.end >= todayISO && weekOptions.includes(w.start));
     const latestWeek = state.weeksAll.filter(w => w.start <= state.dateMax && w.end >= state.dateMax).pop() || state.weeksAll.at(-1);
-    if (latestWeek && weekOptions.includes(latestWeek.start)) $("weekSel").value = latestWeek.start;
+    const defaultWeek = systemWeek || latestWeek;
+    if (defaultWeek && weekOptions.includes(defaultWeek.start)) $("weekSel").value = defaultWeek.start;
   }
 
   if ($("rangeStart")) $("rangeStart").value = keep?.rangeStart || $("rangeStart").value || state.dateMin;
@@ -2989,12 +3057,8 @@ async function ensureDataForCurrentRange(){
   let done = 0;
 
   const updateRangeStatus = () => {
-    if (state.backgroundPreload?.active) {
-      renderBackgroundPreloadStatus();
-      return;
-    }
     const progress = total ? (done / total * 100) : 100;
-    setDataStatus("選擇月份資料載入中", { progress });
+    setDataStatus("目前選擇期間資料載入中", { progress });
   };
 
   if (total > 0) updateRangeStatus();
@@ -3011,11 +3075,8 @@ async function ensureDataForCurrentRange(){
     state.halfForegroundLoading = false;
   }
 
-  if (state.backgroundPreload?.active) {
-    renderBackgroundPreloadStatus();
-  } else if (total > 0) {
-    setDataStatus("目前選擇月份資料已載入完成", { progress:100 });
-  }
+  if (total > 0) setDataStatus("目前選擇期間資料已載入完成", { progress:100 });
+  else setDataStatus("目前選擇期間沒有可載入的資料", { progress:100 });
 }
 
 function getFactoryRemainingFiles(key){
@@ -3039,6 +3100,11 @@ function renderBackgroundPreloadStatus(){
 }
 
 function startBackgroundLoadAllFactories(){
+  // 已停用：歷史月份改由月份／週別／指定範圍／年別選擇時按需載入。
+  state.backgroundPreloadToken += 1;
+  state.backgroundPreload = {active:false, done:0, total:0};
+  return;
+  /* legacy background loader retained below for compatibility */
   const token = ++state.backgroundPreloadToken;
   const plan = [];
   for (const key of allFactoryKeys()){
@@ -4416,7 +4482,7 @@ function wireUI(){
 
 /* ========================================================================
    查詢項目擴充：半成品 / 人時性
-   - 人時性資料來源：四廠日報 Dashboard 的 manifest + Excel
+   - 人時性資料來源：四廠日報 Dashboard 的 JSON manifest（失敗時回退 Excel）
    - 索引先完成，所選期間優先；近 3 個月與其餘月份於背景依序載入
    - 人時性模式目前只顯示「多廠 KPI 趨勢圖」
    ======================================================================== */
@@ -4449,8 +4515,7 @@ const HUMAN_FACTORIES = {
   changjia: {
     name: "長家",
     baseUrl: "https://hamster3-3-3.github.io/ChangJia/",
-    // 長家日報站實際使用的索引檔名
-    manifestPath: "data/manifest_changjia.json",
+    manifestPath: "data/manifest.json",
     color: FACTORIES.changjia.color
   },
   jinxin: {
@@ -4505,7 +4570,7 @@ const HALF_METRIC_OPTIONS = [
 ];
 
 function humanEmptyFactoryState(){
-  return { rows:[], itemRows:[], files:[], errors:[], loadedFiles:new Set(), loadingFiles:new Set(), loadPromises:new Map() };
+  return { rows:[], itemRows:[], files:[], jsonManifest:null, errors:[], loadedFiles:new Set(), loadingFiles:new Set(), loadPromises:new Map() };
 }
 state.humanFactories = state.humanFactories || {};
 for (const key of allFactoryKeys()) {
@@ -4539,6 +4604,7 @@ function humanSheetGrid(ws){
 // 總覽若沿用半成品共用的 fetchWorkbook(cellDates:true)，部分換線分鐘欄會被 SheetJS
 // 轉成 Date，造成新豐／大溪換線時間被判定為非數值而顯示 0。
 async function humanFetchWorkbook(url){
+  await ensureXlsxLibrary();
   const r = await fetch(url, {cache:"force-cache"});
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   const ab = await r.arrayBuffer();
@@ -5178,6 +5244,85 @@ function humanParseWorkbook(wb, filePath, factoryKey){
     })
   };
 }
+
+function humanISOFromJsonDateKey(value){
+  const s = safeStr(value).replace(/\D/g, "");
+  if (!/^20\d{6}$/.test(s)) return null;
+  return `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}`;
+}
+function humanJsonEntryMap(payload, key){
+  const pairs = Array.isArray(payload?.[key]) ? payload[key] : [];
+  return new Map(pairs.filter(pair => Array.isArray(pair) && pair.length >= 2));
+}
+function humanNullableNumber(value){
+  return humanHasFiniteValue(value) ? Number(value) : null;
+}
+function humanParseDashboardJson(payload){
+  if (!payload || !Array.isArray(payload.recordList) || !Array.isArray(payload.summaries)) {
+    throw new Error("人時性 JSON 欄位不完整");
+  }
+  const itemCounts = humanJsonEntryMap(payload, "itemCountDaily");
+  const stoplines = humanJsonEntryMap(payload, "stoplineDaily");
+  const changeTotals = humanJsonEntryMap(payload, "changeoverDaily");
+  const changeCounts = humanJsonEntryMap(payload, "changeoverCountDaily");
+
+  const rows = [];
+  for (const pair of payload.summaries){
+    if (!Array.isArray(pair) || pair.length < 2 || !pair[1]) continue;
+    const [key, summary] = pair;
+    const parts = safeStr(key).split("|");
+    const temp = safeStr(summary.temp || parts[0] || "4");
+    const mmdd = safeStr(summary.mmdd || parts[1] || "");
+    const date = humanISOFromJsonDateKey(mmdd);
+    if (!date) continue;
+    const dailyKey = `${temp}|${mmdd}`;
+    const changeoverTotal = humanNullableNumber(changeTotals.get(dailyKey));
+    const changeoverCount = humanNullableNumber(changeCounts.get(dailyKey));
+    const stop = stoplines.get(mmdd) || {};
+    rows.push({
+      date, temp,
+      totalQty:humanNullableNumber(summary.totalQty),
+      revenue:humanNullableNumber(summary.revenue),
+      attendance:humanNullableNumber(summary.attendance),
+      efficiency:humanNullableNumber(summary.efficiency),
+      avgPrice:humanNullableNumber(summary.avgPrice),
+      multi:humanNullableNumber(summary.multi),
+      itemCount:humanNullableNumber(itemCounts.get(dailyKey)),
+      changeoverMin:changeoverCount > 0 && changeoverTotal !== null ? changeoverTotal / changeoverCount : null,
+      changeoverCount,
+      changeoverTotal,
+      abCnt:humanNullableNumber(stop.abCnt),
+      abTime:humanNullableNumber(stop.abTime),
+      shCnt:humanNullableNumber(stop.shCnt),
+      shEquip:humanNullableNumber(stop.shEquip)
+    });
+  }
+
+  const itemRows = payload.recordList.map(rec => {
+    const date = humanISOFromJsonDateKey(rec?.mmdd);
+    if (!date || !rec?.product) return null;
+    return {
+      date,
+      temp:safeStr(rec.temp || "4"),
+      line:safeStr(rec.line),
+      group:safeStr(rec.category || "未分類"),
+      product:safeStr(rec.product),
+      pairType:humanPairTypeFromName(rec.product),
+      totalQty:humanNullableNumber(rec.qty),
+      multi:humanNullableNumber(rec.multi),
+      peopleStd:humanNullableNumber(rec.peopleStd),
+      peopleAct:humanNullableNumber(rec.peopleAct ?? rec.people),
+      capacityStd:humanNullableNumber(rec.capStd),
+      capacity:humanNullableNumber(rec.capAct ?? rec.cap),
+      efficiencyStd:humanNullableNumber(rec.effStd),
+      efficiency:humanNullableNumber(rec.effAct ?? rec.eff),
+      changeMin:humanNullableNumber(rec.changeMin),
+      runMin:humanNullableNumber(rec.runMin)
+    };
+  }).filter(Boolean);
+
+  return {rows, itemRows};
+}
 function humanDedupeRows(target){
   const map = new Map();
   for (const r of target.rows || []){
@@ -5220,8 +5365,19 @@ async function ensureHumanFactoryIndex(key){
   const cur = state.humanFactories[key] || humanEmptyFactoryState();
   if (Array.isArray(cur.files) && cur.files.length) return;
 
-  // 一般三廠仍依 manifest；長家則優先採 GitHub repo 實際檔案清單，
-  // 與長家單站目前能正常運作的 fallback 邏輯一致。
+  // 四廠皆優先使用自動轉檔產生的 JSON 索引；只有索引尚未部署時才退回 Excel 清單。
+  try{
+    const jsonManifest = await fetchJSON(cfg.baseUrl + "data/json-manifest.json");
+    const jsonFiles = Object.keys(jsonManifest?.files || {}).filter(humanIsWorkbook);
+    if (jsonFiles.length){
+      state.humanFactories[key] = Object.assign(cur, {files:jsonFiles, jsonManifest});
+      return;
+    }
+  }catch(e){
+    console.warn("human JSON manifest unavailable; fallback to Excel manifest", key, e);
+  }
+
+  // 相容尚未部署新 JSON 索引的長家舊站。
   if (key === "changjia"){
     try{
       const actualFiles = await humanListActualRepoWorkbooks(key);
@@ -5261,33 +5417,45 @@ async function humanLoadFactoryFiles(key, files, options={}){
     const promise = (async()=>{
       try{
         let actualPath = path;
-        let wb;
-        try{
-          wb = await humanFetchWorkbook(cfg.baseUrl + "data/" + encodePath(actualPath));
-        }catch(firstErr){
-          // 長家 manifest_changjia.json 目前 5 月後仍是「115長家...」，
-          // 但 repo 實際檔名已移除 115。若 GitHub Contents API 暫時不可用而退回 manifest，
-          // 這裡再做一次實際檔名 fallback，避免 5 月後直接 404。
-          if (key === "changjia" && /^115長家生產日報表[（(]/.test(actualPath)){
-            const altPath = actualPath.replace(/^115/, "");
-            try{
-              wb = await humanFetchWorkbook(cfg.baseUrl + "data/" + encodePath(altPath));
-              actualPath = altPath;
-            }catch(_altErr){
-              throw firstErr;
-            }
-          }else{
-            throw firstErr;
+        let parsed = null;
+        let loadedFromJson = false;
+        const jsonEntry = target.jsonManifest?.files?.[path];
+        if (jsonEntry){
+          try{
+            const payload = await fetchDashboardJson(cfg.baseUrl, jsonEntry);
+            parsed = humanParseDashboardJson(payload);
+            loadedFromJson = true;
+          }catch(jsonError){
+            console.warn("human JSON failed; fallback to Excel", key, path, jsonError);
           }
         }
-        const parsed = humanParseWorkbook(wb, actualPath, key);
+        if (!parsed){
+          let wb;
+          try{
+            wb = await humanFetchWorkbook(cfg.baseUrl + "data/" + encodePath(actualPath));
+          }catch(firstErr){
+            // 舊長家 manifest 檔名相容處理；新 JSON 索引部署後通常不會進入此段。
+            if (key === "changjia" && /^115長家生產日報表[（(]/.test(actualPath)){
+              const altPath = actualPath.replace(/^115/, "");
+              try{
+                wb = await humanFetchWorkbook(cfg.baseUrl + "data/" + encodePath(altPath));
+                actualPath = altPath;
+              }catch(_altErr){
+                throw firstErr;
+              }
+            }else{
+              throw firstErr;
+            }
+          }
+          parsed = humanParseWorkbook(wb, actualPath, key);
+        }
         target.rows.push(...(parsed?.rows || []));
         target.itemRows = target.itemRows || [];
         target.itemRows.push(...(parsed?.itemRows || []));
         target.loadedFiles.add(path); // 仍以索引中的原 path 作 loaded key，避免重複載入
         if (actualPath !== path) target.loadedFiles.add(actualPath);
         if (options.onFileDone) options.onFileDone(key, path, true);
-        return {ok:true, file:path, actualFile:actualPath};
+        return {ok:true, file:path, actualFile:actualPath, json:loadedFromJson};
       }catch(e){
         console.warn("human", key, path, e);
         target.errors.push(path);
@@ -5373,19 +5541,29 @@ function humanBuildSelectors(keep=null){
 
   const prevYear = keep?.year || ($("yearSel")?.value || "");
   $("yearSel").innerHTML = state.years.map(y=>`<option value="${y}">${y}</option>`).join("");
-  const latestYear = (state.dateMax || toISO(new Date())).slice(0,4);
-  $("yearSel").value = state.years.includes(prevYear) ? prevYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1)||""));
+  const now = new Date();
+  const systemYear = String(now.getFullYear());
+  const systemMonth = humanPad2(now.getMonth()+1);
+  const latestYear = (state.dateMax || toISO(now)).slice(0,4);
+  const defaultYear = state.years.includes(systemYear) ? systemYear : (state.years.includes(latestYear) ? latestYear : (state.years.at(-1)||""));
+  $("yearSel").value = state.years.includes(prevYear) ? prevYear : defaultYear;
   renderMonthOptions();
   const prevMonth = keep?.month || ($("monthSel")?.value || "");
   const months = state.monthsByYear[$("yearSel").value] || [];
   const latestMonth = (state.dateMax || "").slice(5,7);
-  $("monthSel").value = months.includes(prevMonth) ? prevMonth : (months.includes(latestMonth) ? latestMonth : (months.at(-1)||""));
+  const defaultMonth = $("yearSel").value === systemYear && months.includes(systemMonth)
+    ? systemMonth
+    : (months.includes(latestMonth) ? latestMonth : (months.at(-1)||""));
+  $("monthSel").value = months.includes(prevMonth) ? prevMonth : defaultMonth;
   renderWeekOptions();
   const weekOptions = Array.from($("weekSel").options).map(o=>o.value);
   if (keep?.weekStart && weekOptions.includes(keep.weekStart)) $("weekSel").value=keep.weekStart;
   else {
+    const todayISO = toISO(now);
+    const systemWeek = state.weeksAll.find(w=>w.start<=todayISO && w.end>=todayISO && weekOptions.includes(w.start));
     const latestWeek = state.weeksAll.filter(w=>w.start<=state.dateMax && w.end>=state.dateMax).pop() || state.weeksAll.at(-1);
-    if (latestWeek && weekOptions.includes(latestWeek.start)) $("weekSel").value=latestWeek.start;
+    const defaultWeek = systemWeek || latestWeek;
+    if (defaultWeek && weekOptions.includes(defaultWeek.start)) $("weekSel").value=defaultWeek.start;
   }
   if ($("rangeStart")) $("rangeStart").value = keep?.rangeStart || $("rangeStart").value || state.dateMin;
   if ($("rangeEnd")) $("rangeEnd").value = keep?.rangeEnd || $("rangeEnd").value || state.dateMax;
@@ -5473,15 +5651,14 @@ async function ensureHumanInitialized(force=false){
       }
     });
 
-    // 索引完成後立即開放操作；所選區間由 renderAll 前景載入，其他檔案在背景解析。
+    // 索引完成後立即開放操作；只由 renderAll 載入目前選擇期間。
     humanBuildGlobalDatesFromManifest();
     state.humanInitialized = true;
     humanBuildGlobalDatesFromManifest();
     humanBuildSelectors(captureTimeSelection());
-    setDataStatus("人時性｜資料索引已就緒；所選期間優先載入，其餘月份背景載入");
-
-    // 背景佇列會將近 3 個月排在最前面，但不再阻塞初始畫面。
-    startHumanBackgroundLoad();
+    state.humanBackgroundToken += 1;
+    state.humanBackground = {active:false, done:0, total:0};
+    setDataStatus("人時性｜資料索引已就緒；只在選擇期間時載入資料");
   })();
   try { await state.humanInitPromise; }
   finally { state.humanInitPromise = null; }
@@ -5496,6 +5673,11 @@ function renderHumanBackgroundStatus(){
   setDataStatus(bg.total && bg.done < bg.total ? `人時性｜其他月份背景載入中 ${Math.round(p)}%` : "人時性｜其他月份背景載入完成", {progress:p});
 }
 function startHumanBackgroundLoad(){
+  // 已停用：歷史月份改由目前選擇期間按需載入。
+  state.humanBackgroundToken += 1;
+  state.humanBackground = {active:false, done:0, total:0};
+  return;
+  /* legacy background loader retained below for compatibility */
   const token=++state.humanBackgroundToken;
   const plan=[];
   for (const key of allFactoryKeys()){
@@ -5520,8 +5702,8 @@ function startHumanBackgroundLoad(){
   if (state.queryType === "human" && !state.humanForegroundLoading) renderHumanBackgroundStatus();
 
   (async()=>{
-    // 背景只允許「一次一份」。下載可以非同步，但 XLSX.read / sheet_to_json 會佔用主執行緒，
-    // 因此每份開始前都先等到瀏覽器 idle，並避開使用者操作後的短時間窗。
+    // 背景只允許「一次一份」。JSON 解析雖已大幅減輕負擔，仍在每份開始前等待瀏覽器 idle；
+    // 若某檔回退 Excel，也可避免 XLSX.read / sheet_to_json 阻塞使用者操作。
     for (const item of plan){
       if (token !== state.humanBackgroundToken) return;
       const canRun = await humanWaitForBackgroundSlot(token);
@@ -5547,6 +5729,7 @@ function startHumanBackgroundLoad(){
       if (token !== state.humanBackgroundToken) return;
       await humanWaitForBackgroundSlot(token);
       humanDedupeRows(state.humanFactories[key]);
+      humanDedupeItemRows(state.humanFactories[key]);
       await new Promise(resolve=>setTimeout(resolve, 30));
     }
 
@@ -5575,20 +5758,20 @@ async function ensureHumanDataForCurrentRange(){
   const total=plans.reduce((s,p)=>s+p.files.length,0);
   let done=0;
 
-  // 前景查詢優先於背景。背景循環會在下一份檔案開始前等待此旗標清除。
+  // 目前期間採前景按需載入，不啟動全歷史背景佇列。
   state.humanForegroundLoading = true;
   try{
-    if (total && !state.humanBackground?.active) setDataStatus("人時性｜選擇月份資料載入中", {progress:0});
+    if (total) setDataStatus("人時性｜目前選擇期間資料載入中", {progress:0});
     await Promise.all(plans.map(p=>humanLoadFactoryFiles(p.key,p.files,{onFileDone:()=>{
       done+=1;
-      if (!state.humanBackground?.active) setDataStatus("人時性｜選擇月份資料載入中", {progress:total?done/total*100:100});
+      setDataStatus("人時性｜目前選擇期間資料載入中", {progress:total?done/total*100:100});
     }})));
   }finally{
     state.humanForegroundLoading = false;
   }
 
-  if (state.humanBackground?.active) renderHumanBackgroundStatus();
-  else if (total) setDataStatus("人時性｜目前選擇月份資料已載入完成", {progress:100});
+  if (total) setDataStatus("人時性｜目前選擇期間資料已載入完成", {progress:100});
+  else setDataStatus("人時性｜目前選擇期間沒有可載入的資料", {progress:100});
 }
 
 function humanMetricLabel(metric){
@@ -6233,12 +6416,111 @@ function applyQueryTypeView(){
   if ($("compareTableTitle")) $("compareTableTitle").textContent = "KPI 對比明細表";
   if ($("compareSub") && human) $("compareSub").textContent = "人時性主要對比項目：總生產量、出勤人數、人時性、多次生產數(平均)、平均換線時間與停線資訊";
   if ($("dataSourceNote")) $("dataSourceNote").innerHTML=human
-    ? `人時性資料來源：晉欣、大溪、新豐日報站的 <code>data/manifest.json</code>，長家日報站的 <code>data/manifest_changjia.json</code> 及其列出的 Excel；索引完成後即可操作，所選期間前景優先載入，其餘檔案依近到遠於背景閒置時解析；Excel 可沿用瀏覽器快取。`
-    : `資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel；索引完成後即可操作，所選期間優先載入，其餘檔案依近到遠於背景載入，並可沿用瀏覽器快取。`;
+    ? `人時性與半成品會先共同準備系統當月及前兩個月的精簡 JSON，切換查詢項目可直接沿用；其他月份只在點選後載入，年別才讀取所選年度。JSON 失敗時才回退 Excel。`
+    : `半成品與人時性會先共同準備系統當月及前兩個月的精簡 JSON，切換查詢項目可直接沿用；其他月份只在點選後載入，年別才讀取所選年度。JSON 失敗時才回退 Excel。`;
   const halfOnly=["barCard"];
   halfOnly.forEach(id=>{const el=$(id);if(el)el.classList.toggle("hidden",human);});
   if (human) destroyChart("bar");
   setMetricOptionsForQuery();
+}
+
+state.recentThreeWarmupPromise = null;
+state.recentThreeReady = false;
+
+function systemRecentMonthKeys(count=3){
+  const now = new Date();
+  const keys = [];
+  for (let i=0; i<count; i++){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    keys.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+  return keys;
+}
+
+function filesForSingleMonth(files, monthKey, human=false){
+  const picker = human ? humanFilesForMonthKeys : filesForMonthKeys;
+  return picker(files || [], [monthKey]).sort((a,b)=>safeStr(a).localeCompare(safeStr(b),"zh-Hant",{numeric:true}));
+}
+
+async function preloadSystemRecentThreeMonths(force=false){
+  if (state.recentThreeReady && !force) return;
+  if (state.recentThreeWarmupPromise && !force) return state.recentThreeWarmupPromise;
+  const reloadBtn = $("reloadBtn");
+  if (reloadBtn) reloadBtn.disabled = true;
+
+  state.recentThreeWarmupPromise = (async()=>{
+    const keep = captureTimeSelection();
+    const monthKeys = systemRecentMonthKeys(3); // 系統當月、前一月、前二月
+    setDataStatus(`正在準備近三個月資料（${monthKeys.slice().reverse().join("、")}）…`, {loading:true});
+
+    // 先平行取得兩類資料的四廠索引；這個階段只讀小型 manifest。
+    await Promise.allSettled([
+      ...allFactoryKeys().map(key=>ensureFactoryIndex(key)),
+      ...allFactoryKeys().map(key=>ensureHumanFactoryIndex(key))
+    ]);
+    state.humanInitialized = true;
+    state.humanBackgroundToken += 1;
+    state.humanBackground = {active:false,done:0,total:0};
+    state.backgroundPreloadToken += 1;
+    state.backgroundPreload = {active:false,done:0,total:0};
+
+    // 依月份由新到舊，且同月份先半成品再人時性；每次只解析一份，避免同時 JSON.parse 造成卡頓。
+    const tasks = [];
+    const seen = new Set();
+    for (const monthKey of monthKeys){
+      for (const type of ["half","human"]){
+        for (const key of allFactoryKeys()){
+          const source = type === "human" ? state.humanFactories[key] : state.factories[key];
+          const files = filesForSingleMonth(source?.files || [], monthKey, type === "human");
+          for (const file of files){
+            const id = `${type}|${key}|${file}`;
+            if (seen.has(id)) continue;
+            seen.add(id);
+            tasks.push({type,key,file,monthKey});
+          }
+        }
+      }
+    }
+
+    let done = 0;
+    const total = tasks.length;
+    const update = task => {
+      const pct = total ? done/total*100 : 100;
+      const label = task ? `${task.monthKey}｜${task.type === "human" ? "人時性" : "半成品"}｜${FACTORIES[task.key].name}` : "近三個月";
+      setDataStatus(`近三個月資料準備中 ${done}/${total}｜${label}`, {progress:pct,progressStyle:"circle"});
+    };
+    update(null);
+
+    for (const task of tasks){
+      if (task.type === "human"){
+        await humanLoadFactoryFiles(task.key,[task.file],{deferDedupe:true,onFileDone:()=>{done+=1;update(task);}});
+      }else{
+        await loadFactoryFiles(task.key,[task.file],{deferDedupe:true,onFileDone:()=>{done+=1;update(task);}});
+      }
+      // 逐檔交還控制權，讓進度與點擊回應可以繪製。
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+
+    for (const key of allFactoryKeys()){
+      dedupeFactoryData(state.factories[key]);
+      humanDedupeRows(state.humanFactories[key]);
+      humanDedupeItemRows(state.humanFactories[key]);
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+
+    state.recentThreeReady = true;
+    if (state.queryType === "human") humanBuildSelectors(keep);
+    else _halfBuildSelectors(keep);
+    renderFactorySelector();
+    setDataStatus(`近三個月資料已準備完成（${monthKeys.slice().reverse().join("、")}）；其他月份將在點選時載入`, {progress:100});
+    if (selectedFactoryKeys().length) await renderAll();
+  })();
+
+  try { await state.recentThreeWarmupPromise; }
+  finally {
+    state.recentThreeWarmupPromise = null;
+    if (reloadBtn) reloadBtn.disabled = false;
+  }
 }
 
 // Save the existing half-product implementation, then make shared UI functions query-aware.
@@ -6317,13 +6599,22 @@ renderAll = async function(){
 };
 
 loadAll = async function(){
-  if (state.queryType !== "human") return _halfLoadAll();
+  if (state.queryType !== "human") {
+    state.recentThreeReady=false;
+    state.recentThreeWarmupPromise=null;
+    await _halfLoadAll();
+    await preloadSystemRecentThreeMonths(true);
+    return;
+  }
   state.humanInitialized=false;
   state.humanInitPromise=null;
   state.humanBackgroundToken+=1;
   state.humanFactories={};
   for (const key of allFactoryKeys()) state.humanFactories[key]=humanEmptyFactoryState();
   await ensureHumanInitialized(true);
+  state.recentThreeReady=false;
+  state.recentThreeWarmupPromise=null;
+  await preloadSystemRecentThreeMonths(true);
   humanBuildSelectors(captureTimeSelection());
   renderFactorySelector();
   return renderAll();
@@ -6343,6 +6634,8 @@ wireUI = function(){
       state.queryType=next;
       applyQueryTypeView();
       try{
+        // 若首次近三個月暖機仍在進行，切換時沿用同一批工作，不重複下載或解析。
+        if (state.recentThreeWarmupPromise) await state.recentThreeWarmupPromise;
         if (next === "human"){
           await ensureHumanInitialized();
           humanBuildSelectors(keep);
@@ -6545,7 +6838,7 @@ $("downloadReportBtn")?.addEventListener("click",downloadAnalysisReport);
 loadAll().catch(e => {
   console.error(e);
   setDataStatus("資料讀取失敗");
-  toast("資料讀取失敗：請確認各廠資料站的 manifest 與 Excel 是否可公開讀取。");
+  toast("資料讀取失敗：請確認各廠資料站的 JSON manifest 或 Excel 是否可公開讀取。");
 });
 </script>
 </body>
