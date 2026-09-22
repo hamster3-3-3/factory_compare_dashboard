@@ -438,6 +438,29 @@
     <p id="dataSourceNote" class="muted text-xs mt-4 leading-relaxed">
       資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
+
+    <section class="card p-5 mt-4" id="analysisReportSection">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <div class="text-base font-extrabold">簡易分析報告</div>
+          <div class="text-xs muted mt-1">依目前選擇的資料類型、工廠、溫層與時間範圍產生；並自動比較前一期間。</div>
+        </div>
+        <button id="generateReportBtn" type="button" class="seg-btn active px-4 py-2">生成簡易分析報告</button>
+      </div>
+      <div id="analysisReportCard" class="hidden mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <div id="analysisReportTitle" class="font-bold"></div>
+            <div id="analysisReportMeta" class="text-xs muted mt-1"></div>
+          </div>
+          <div class="flex gap-2">
+            <button id="copyReportBtn" type="button" class="seg-btn">複製內容</button>
+            <button id="downloadReportBtn" type="button" class="seg-btn">下載 TXT</button>
+          </div>
+        </div>
+        <div id="analysisReportBody" class="text-sm leading-7 whitespace-pre-line"></div>
+      </div>
+    </section>
   </div>
 
   <div id="chartExpandBackdrop" class="hidden" onclick="closeExpandedChart()"></div>
@@ -731,27 +754,37 @@ function syncOveruseMetricControls(data=null){
 }
 
 async function ensureLibs(){
-  if (!window.XLSX) {
-    await loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js");
-  }
-  if (!window.Chart) {
-    await loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js");
-  }
+  // 兩套互不相依的函式庫平行下載，縮短第一次開啟的等待時間。
+  await Promise.all([
+    window.XLSX ? Promise.resolve() : loadScript("https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"),
+    window.Chart ? Promise.resolve() : loadScript("https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js")
+  ]);
 }
 function loadScript(src){
-  return new Promise((resolve,reject)=>{
+  window.__dashboardScriptPromises = window.__dashboardScriptPromises || new Map();
+  if (window.__dashboardScriptPromises.has(src)) return window.__dashboardScriptPromises.get(src);
+  const existing = Array.from(document.scripts).find(s => s.src === src);
+  if (existing?.dataset.loaded === "true") return Promise.resolve();
+  const promise = new Promise((resolve,reject)=>{
     const s = document.createElement("script");
-    s.src = src; s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
+    s.src = src;
+    s.onload = () => { s.dataset.loaded = "true"; resolve(); };
+    s.onerror = reject;
+    document.head.appendChild(s);
   });
+  window.__dashboardScriptPromises.set(src, promise);
+  return promise;
 }
 
 async function fetchJSON(url){
-  const r = await fetch(url, {cache:"no-store"});
+  // 索引仍向伺服器確認是否更新，但可沿用 ETag / Last-Modified，避免每次完整重抓。
+  const r = await fetch(url, {cache:"no-cache"});
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   return await r.json();
 }
 async function fetchWorkbook(url){
-  const r = await fetch(url, {cache:"no-store"});
+  // Excel 檔名通常含日期且不會覆寫；允許瀏覽器快取可大幅加速再次開啟與切換月份。
+  const r = await fetch(url, {cache:"force-cache"});
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   const ab = await r.arrayBuffer();
   return XLSX.read(ab, {type:"array", cellDates:true});
@@ -2797,16 +2830,18 @@ async function loadAll(){
   state.backgroundPreloadToken += 1;
   state.backgroundPreload = { active: false, done: 0, total: 0 };
   setDataStatus("讀取四廠資料索引中...", { loading:true });
-  await ensureLibs();
+  // 函式庫與四廠索引同時下載，避免串行等待。
+  const libsPromise = ensureLibs();
 
   // 重整時保留目前勾選；初次進入仍預設不勾選任何工廠。
-  // 但會先預載四廠近三個月資料，之後選擇工廠時可直接使用快取資料，降低等待時間。
+  // 索引完成後立刻開放操作，Excel 改在背景依「近三個月優先」順序載入。
   const keepSelected = selectedFactoryKeys();
   for (const key of allFactoryKeys()) state.factories[key] = emptyFactoryState();
 
   const results = await Promise.allSettled(allFactoryKeys().map(async key => {
     state.factories[key] = await loadFactory(key);
   }));
+  await libsPromise;
   results.forEach((res, idx) => {
     if (res.status === "rejected") {
       const key = allFactoryKeys()[idx];
@@ -2826,46 +2861,13 @@ async function loadAll(){
   $("weekWrap").classList.add("hidden");
   $("rangeWrap").classList.add("hidden");
 
-  const recentKeysByFactory = {};
-  for (const key of allFactoryKeys()) {
-    recentKeysByFactory[key] = recentMonthKeysFromManifest(state.factories[key].files || [], 3);
-  }
-  const recentLabel = Array.from(new Set(Object.values(recentKeysByFactory).flat())).sort().join("、") || "近三個月";
-  const recentPlans = allFactoryKeys().map(key => ({
-    key,
-    files: filesForMonthKeys(state.factories[key].files || [], recentKeysByFactory[key] || [])
-  }));
-  const recentTotal = recentPlans.reduce((sum, item) => sum + item.files.length, 0);
-  let recentDone = 0;
-  const updateRecentPreloadStatus = () => {
-    const ratio = recentTotal > 0 ? (recentDone / recentTotal * 100) : 100;
-    setDataStatus(`預先載入四廠近三個月資料中（${recentLabel}） ${recentDone}/${recentTotal} 份`, { progress: ratio, progressStyle:"circle" });
-  };
-  updateRecentPreloadStatus();
-
-  await Promise.all(recentPlans.map(item => loadFactoryFiles(item.key, item.files, {
-    onFileDone: () => {
-      recentDone += 1;
-      updateRecentPreloadStatus();
-    }
-  })));
-
-  buildGlobalDatesFromLoadedOrManifest();
-  buildSelectors();
-  renderFactorySelector();
-
-  const preloadSummary = allFactoryKeys()
-    .map(k => `${FACTORIES[k].name} ${state.factories[k].loadedFiles.size}/${state.factories[k].files.length} 份`)
-    .join("；");
-  setDataStatus(`已預載四廠近三個月資料：${preloadSummary}`);
-
   if (keepSelected.length) {
     await renderAll();
   } else {
-    renderEmptyState("已預載四廠近三個月資料；請選擇 1～4 個工廠進行對比。其他月份會在背景持續載入，後續切換月份時可直接使用。");
+    renderEmptyState("資料索引已就緒；請選擇 1～4 個工廠進行對比。所選期間會優先載入，其餘資料會在背景持續載入。");
   }
 
-  // 近三個月先完成並顯示後，再非阻塞背景讀取其餘月份。
+  // 不阻塞畫面；背景仍先讀近三個月，再讀其餘月份。
   startBackgroundLoadAllFactories();
 }
 
@@ -2997,12 +2999,17 @@ async function ensureDataForCurrentRange(){
 
   if (total > 0) updateRangeStatus();
 
-  await Promise.all(filePlans.map(item => loadFactoryFiles(item.key, item.files, {
-    onFileDone: () => {
-      done += 1;
-      updateRangeStatus();
-    }
-  })));
+  state.halfForegroundLoading = true;
+  try{
+    await Promise.all(filePlans.map(item => loadFactoryFiles(item.key, item.files, {
+      onFileDone: () => {
+        done += 1;
+        updateRangeStatus();
+      }
+    })));
+  }finally{
+    state.halfForegroundLoading = false;
+  }
 
   if (state.backgroundPreload?.active) {
     renderBackgroundPreloadStatus();
@@ -3038,6 +3045,19 @@ function startBackgroundLoadAllFactories(){
     for (const file of getFactoryRemainingFiles(key)) plan.push({key, file});
   }
 
+  // 最近三個月排在歷史月份之前；同優先級再依月份由新到舊。
+  const recentByFactory = Object.fromEntries(allFactoryKeys().map(key => [
+    key,
+    new Set(recentMonthKeysFromManifest(state.factories[key]?.files || [], 3))
+  ]));
+  plan.sort((a,b) => {
+    const am = monthKeyFromFilePath(a.file) || "";
+    const bm = monthKeyFromFilePath(b.file) || "";
+    const ap = recentByFactory[a.key]?.has(am) ? 1 : 0;
+    const bp = recentByFactory[b.key]?.has(bm) ? 1 : 0;
+    return bp - ap || bm.localeCompare(am) || a.key.localeCompare(b.key);
+  });
+
   state.backgroundPreload = { active: true, done: 0, total: plan.length };
   if (!plan.length){
     state.backgroundPreload.active = false;
@@ -3055,6 +3075,14 @@ function startBackgroundLoadAllFactories(){
     // 使用小批次背景載入，避免一次打開太多 Excel 造成瀏覽器卡頓；前台仍可操作。
     const batchSize = 2;
     for (let i=0; i<plan.length; i+=batchSize){
+      if (token !== state.backgroundPreloadToken) return;
+      // 背景解析避開使用者操作與前景指定區間載入，降低 Excel 解析造成的卡頓。
+      while (token === state.backgroundPreloadToken && (
+        state.halfForegroundLoading ||
+        (typeof humanIsInputPending === "function" && humanIsInputPending()) ||
+        (typeof humanNowMs === "function" && humanNowMs() - Number(state.humanLastUserActivity || 0) < 180)
+      )) await new Promise(resolve=>setTimeout(resolve,90));
+      if (typeof humanIdleOnce === "function") await humanIdleOnce(650);
       if (token !== state.backgroundPreloadToken) return;
       const batch = plan.slice(i, i + batchSize);
       await Promise.all(batch.map(item => loadFactoryFiles(item.key, [item.file], {
@@ -4389,7 +4417,7 @@ function wireUI(){
 /* ========================================================================
    查詢項目擴充：半成品 / 人時性
    - 人時性資料來源：四廠日報 Dashboard 的 manifest + Excel
-   - 先載近 3 個月，再於背景載入其餘月份
+   - 索引先完成，所選期間優先；近 3 個月與其餘月份於背景依序載入
    - 人時性模式目前只顯示「多廠 KPI 趨勢圖」
    ======================================================================== */
 state.queryType = state.queryType || "half";
@@ -4511,7 +4539,7 @@ function humanSheetGrid(ws){
 // 總覽若沿用半成品共用的 fetchWorkbook(cellDates:true)，部分換線分鐘欄會被 SheetJS
 // 轉成 Date，造成新豐／大溪換線時間被判定為非數值而顯示 0。
 async function humanFetchWorkbook(url){
-  const r = await fetch(url, {cache:"no-store"});
+  const r = await fetch(url, {cache:"force-cache"});
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   const ab = await r.arrayBuffer();
   return XLSX.read(ab, {type:"array"});
@@ -5175,7 +5203,7 @@ async function humanListActualRepoWorkbooks(key){
   const url = "https://api.github.com/repos/hamster3-3-3/ChangJia/contents/data?ref=main";
   const res = await fetch(url, {
     headers: {"Accept":"application/vnd.github+json"},
-    cache: "no-store"
+    cache: "no-cache"
   });
   if (!res.ok) throw new Error(`GitHub Contents HTTP ${res.status}`);
   const data = await res.json();
@@ -5445,27 +5473,14 @@ async function ensureHumanInitialized(force=false){
       }
     });
 
-    // 改回原本方式：進入人時性後，四廠近 3 個月先全部載入完成。
+    // 索引完成後立即開放操作；所選區間由 renderAll 前景載入，其他檔案在背景解析。
     humanBuildGlobalDatesFromManifest();
-    const plans = allFactoryKeys().map(key=>{
-      const keys=humanRecentMonthKeys(state.humanFactories[key]?.files || [],3);
-      return {key, keys, files:humanFilesForMonthKeys(state.humanFactories[key]?.files || [],keys)};
-    });
-    const label = Array.from(new Set(plans.flatMap(p=>p.keys))).sort().join("、");
-    const total = plans.reduce((s,p)=>s+p.files.length,0);
-    let done=0;
-    humanRecentLoadStatus(done,total,label);
-    await Promise.all(plans.map(p=>humanLoadFactoryFiles(p.key,p.files,{onFileDone:()=>{
-      done+=1;
-      humanRecentLoadStatus(done,total,label);
-    }})));
-
     state.humanInitialized = true;
     humanBuildGlobalDatesFromManifest();
     humanBuildSelectors(captureTimeSelection());
-    setDataStatus(`人時性｜近三個月已載入：${allFactoryKeys().map(k=>`${HUMAN_FACTORIES[k].name} ${state.humanFactories[k].loadedFiles.size}/${state.humanFactories[k].files.length} 份`).join("；")}`);
+    setDataStatus("人時性｜資料索引已就緒；所選期間優先載入，其餘月份背景載入");
 
-    // 近 3 個月顯示完成後，再恢復「其他所有月份自動背景載入」。
+    // 背景佇列會將近 3 個月排在最前面，但不再阻塞初始畫面。
     startHumanBackgroundLoad();
   })();
   try { await state.humanInitPromise; }
@@ -5486,6 +5501,15 @@ function startHumanBackgroundLoad(){
   for (const key of allFactoryKeys()){
     for (const file of humanRemainingFiles(key)) plan.push({key,file});
   }
+  const recentByFactory = Object.fromEntries(allFactoryKeys().map(key => [
+    key,
+    new Set(humanRecentMonthKeys(state.humanFactories[key]?.files || [], 3))
+  ]));
+  plan.sort((a,b)=>{
+    const am=humanMonthKeyFromFilePath(a.file)||"", bm=humanMonthKeyFromFilePath(b.file)||"";
+    const ap=recentByFactory[a.key]?.has(am)?1:0, bp=recentByFactory[b.key]?.has(bm)?1:0;
+    return bp-ap || bm.localeCompare(am) || a.key.localeCompare(b.key);
+  });
   state.humanBackground={active:!!plan.length,done:0,total:plan.length};
   state.humanBackgroundDirtyFactories = new Set();
 
@@ -6209,8 +6233,8 @@ function applyQueryTypeView(){
   if ($("compareTableTitle")) $("compareTableTitle").textContent = "KPI 對比明細表";
   if ($("compareSub") && human) $("compareSub").textContent = "人時性主要對比項目：總生產量、出勤人數、人時性、多次生產數(平均)、平均換線時間與停線資訊";
   if ($("dataSourceNote")) $("dataSourceNote").innerHTML=human
-    ? `人時性資料來源：晉欣、大溪、新豐日報站的 <code>data/manifest.json</code>，長家日報站的 <code>data/manifest_changjia.json</code> 及其列出的 Excel；切換人時性時優先載入四廠近 3 個月資料，完成後自動於背景載入其餘月份；背景載入採單檔、閒置時解析與延後去重，降低操作期間卡頓。`
-    : `資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。`;
+    ? `人時性資料來源：晉欣、大溪、新豐日報站的 <code>data/manifest.json</code>，長家日報站的 <code>data/manifest_changjia.json</code> 及其列出的 Excel；索引完成後即可操作，所選期間前景優先載入，其餘檔案依近到遠於背景閒置時解析；Excel 可沿用瀏覽器快取。`
+    : `資料讀取來源：新豐、大溪、長家、晉欣原網站的 <code>data/manifest.json</code> 及其列出的 Excel；索引完成後即可操作，所選期間優先載入，其餘檔案依近到遠於背景載入，並可沿用瀏覽器快取。`;
   const halfOnly=["barCard"];
   halfOnly.forEach(id=>{const el=$(id);if(el)el.classList.toggle("hidden",human);});
   if (human) destroyChart("bar");
@@ -6377,7 +6401,147 @@ wireUI = function(){
   applyQueryTypeView();
 };
 
+function reportSignedChange(current, previous, digits=1){
+  const c=Number(current), p=Number(previous);
+  if (!Number.isFinite(c) || !Number.isFinite(p) || p===0) return "前期無可比較基準";
+  const ratio=(c-p)/p;
+  if (Math.abs(ratio)<1e-9) return "與前期持平";
+  return `較前期${ratio>0?"增加":"減少"}${Math.abs(ratio*100).toFixed(digits)}%`;
+}
+function reportRangeLabel(){
+  const cur=getDateRange();
+  const prev=getPreviousDateRange(cur.start,cur.end);
+  return {cur,prev,label:prev?.label || "前期"};
+}
+async function ensureAnalysisReportData(){
+  const keys=selectedFactoryKeys();
+  if (!keys.length) throw new Error("請先選擇至少一個工廠");
+  const {cur,prev}=reportRangeLabel();
+  const monthKeys=Array.from(new Set([
+    ...monthKeysBetween(cur.start,cur.end),
+    ...(prev?.start ? monthKeysBetween(prev.start,prev.end) : [])
+  ])).sort();
+  if (state.queryType === "human"){
+    await ensureHumanInitialized();
+    state.humanForegroundLoading=true;
+    try{
+      await Promise.all(keys.map(async key=>{
+        await ensureHumanFactoryIndex(key);
+        const files=humanFilesForMonthKeys(state.humanFactories[key]?.files || [],monthKeys);
+        return humanLoadFactoryFiles(key,files);
+      }));
+    }finally{ state.humanForegroundLoading=false; }
+  }else{
+    state.halfForegroundLoading=true;
+    try{
+      await Promise.all(keys.map(async key=>{
+        await ensureFactoryIndex(key);
+        const files=filesForMonthKeys(state.factories[key]?.files || [],monthKeys);
+        return loadFactoryFiles(key,files);
+      }));
+    }finally{ state.halfForegroundLoading=false; }
+  }
+}
+function halfAnalysisReport(){
+  const data=currentData();
+  const {label}=reportRangeLabel();
+  const lines=[];
+  const valid=[];
+  for (const slot of data.slots || []){
+    const name=FACTORIES[slot.key]?.name || slot.key;
+    const a=slot.agg || {}, p=slot.prevAgg || {};
+    const hasData=(slot.summaryRows?.length || 0)+(slot.detailRows?.length || 0)>0;
+    lines.push(`【${name}】`);
+    if (!hasData){ lines.push("目前區間無可分析資料。",""); continue; }
+    const topScrap=aggregateTopByProductSemi(slot.detailRows || [],"scrapAmt","all")[0];
+    const overMetric=isPostMayOveruseLayout(data)?"overuseAmtB":"overuseAmt";
+    const topOver=aggregateTopByProductSemi(slot.detailRows || [],overMetric,"all")[0];
+    lines.push(`營業額 ${fmtSalesWan(a.sales)}（${reportSignedChange(a.sales,p.sales).replace("前期",label)}）。`);
+    lines.push(`報廢金額 ${fmtMoney(a.scrapAmt)}，報廢率 ${fmtPct(a.scrapRate)}，${Number(a.scrapRate)<=0.0025?"符合":"未符合"} KPI 0.25%（${reportSignedChange(a.scrapAmt,p.scrapAmt).replace("前期",label)}）。`);
+    lines.push(`超用金額（多產－廢棄）${fmtMoney(a.overuseAmtB)}，超用率 ${fmtPct(a.overuseNetRate)}，${Number(a.overuseNetRate)<=0.0025?"符合":"未符合"} KPI 0.25%（${reportSignedChange(a.overuseAmtB,p.overuseAmtB).replace("前期",label)}）。`);
+    if (topScrap) lines.push(`主要報廢項目為「${topScrap.product || "—"}／${topScrap.semi || "—"}」，金額 ${fmtMoney(topScrap.scrapAmt)}。`);
+    if (topOver) lines.push(`主要超用項目為「${topOver.product || "—"}／${topOver.semi || "—"}」，金額 ${fmtMoney(topOver[overMetric])}。`);
+    lines.push("");
+    valid.push({key:slot.key,name,a});
+  }
+  if (valid.length>=2){
+    const lowScrap=[...valid].filter(x=>Number.isFinite(Number(x.a.scrapRate))).sort((x,y)=>x.a.scrapRate-y.a.scrapRate)[0];
+    const lowOver=[...valid].filter(x=>Number.isFinite(Number(x.a.overuseNetRate))).sort((x,y)=>x.a.overuseNetRate-y.a.overuseNetRate)[0];
+    lines.push(`【綜合比較】報廢率最低為${lowScrap?.name || "—"}（${fmtPct(lowScrap?.a.scrapRate)}）；超用率最低為${lowOver?.name || "—"}（${fmtPct(lowOver?.a.overuseNetRate)}）。`);
+  }
+  return lines.join("\n").trim();
+}
+function humanAnalysisReport(){
+  const {cur,prev,label}=reportRangeLabel();
+  const lines=[];
+  const valid=[];
+  for (const key of selectedFactoryKeys()){
+    const name=HUMAN_FACTORIES[key]?.name || key;
+    const agg=humanAggregateCardStats(humanRowsForRange(key,cur.start,cur.end));
+    const prevAgg=prev?.start ? humanAggregateCardStats(humanRowsForRange(key,prev.start,prev.end)) : null;
+    lines.push(`【${name}】`);
+    if (!agg){ lines.push("目前區間無可分析資料。",""); continue; }
+    lines.push(`總生產量 ${humanMetricFormat("totalQty",agg.totalQty)}（${reportSignedChange(agg.totalQty,prevAgg?.totalQty).replace("前期",label)}）。`);
+    lines.push(`平均人時性 ${humanMetricFormat("efficiency",agg.efficiency)}（${reportSignedChange(agg.efficiency,prevAgg?.efficiency).replace("前期",label)}）；平均出勤 ${humanMetricFormat("attendance",agg.attendance)} 人。`);
+    lines.push(`多次生產數平均 ${humanMetricFormat("multi",agg.multi)}；平均換線時間 ${humanMetricFormat("changeoverMin",agg.changeoverMin)}。`);
+    lines.push(`異常停線 ${humanFormatCardValue("abCnt",agg.abCnt)} 次／${humanFormatCardValue("abTime",agg.abTime)} 分；短暫停線 ${humanFormatCardValue("shCnt",agg.shCnt)} 次。`);
+    const decline=humanBuildCompareItems(key).filter(r=>Number.isFinite(Number(r.effDown))&&Number(r.effDown)>0).sort((a,b)=>b.effDown-a.effDown)[0];
+    if (decline) lines.push(`人時性下滑較多的商品為「${decline.product}」，${label} ${humanMetricFormat("efficiency",decline.effPrev)} → 現 ${humanMetricFormat("efficiency",decline.effCur)}（下降 ${humanMetricFormat("efficiency",decline.effDown)}）。`);
+    lines.push("");
+    valid.push({name,agg});
+  }
+  if (valid.length>=2){
+    const best=[...valid].filter(x=>Number.isFinite(Number(x.agg.efficiency))).sort((a,b)=>b.agg.efficiency-a.agg.efficiency)[0];
+    const fastest=[...valid].filter(x=>Number.isFinite(Number(x.agg.changeoverMin))).sort((a,b)=>a.agg.changeoverMin-b.agg.changeoverMin)[0];
+    lines.push(`【綜合比較】平均人時性最高為${best?.name || "—"}（${humanMetricFormat("efficiency",best?.agg.efficiency)}）；平均換線時間最短為${fastest?.name || "—"}（${humanMetricFormat("changeoverMin",fastest?.agg.changeoverMin)}）。`);
+  }
+  return lines.join("\n").trim();
+}
+async function generateSimpleAnalysisReport(){
+  const btn=$("generateReportBtn");
+  const original=btn?.textContent || "生成簡易分析報告";
+  try{
+    if (btn){btn.disabled=true;btn.textContent="補齊資料並分析中...";}
+    await ensureAnalysisReportData();
+    const {cur,prev,label}=reportRangeLabel();
+    const human=state.queryType === "human";
+    const text=human ? humanAnalysisReport() : halfAnalysisReport();
+    const names=selectedFactoryKeys().map(k=>(human?HUMAN_FACTORIES[k]:FACTORIES[k])?.name || k).join("、");
+    const title=`${human?`${state.humanTemp || "4"}°C 人時性`:`半成品`}簡易分析報告`;
+    $("analysisReportTitle").textContent=title;
+    $("analysisReportMeta").textContent=`${names}｜目前 ${cur.start} ～ ${cur.end}｜${label} ${prev?.start || "—"} ～ ${prev?.end || "—"}`;
+    $("analysisReportBody").textContent=text || "目前條件沒有足夠資料可產生分析。";
+    $("analysisReportCard").classList.remove("hidden");
+    state.analysisReportText=`${title}\n${$("analysisReportMeta").textContent}\n\n${$("analysisReportBody").textContent}`;
+    $("analysisReportCard").scrollIntoView({behavior:"smooth",block:"nearest"});
+  }catch(e){
+    console.error("analysis report",e);
+    toast(e?.message || "簡易分析報告產生失敗");
+  }finally{
+    if (btn){btn.disabled=false;btn.textContent=original;}
+  }
+}
+async function copyAnalysisReport(){
+  const text=state.analysisReportText || "";
+  if (!text){toast("請先生成簡易分析報告");return;}
+  try{await navigator.clipboard.writeText(text);toast("分析報告已複製");}
+  catch(_){toast("瀏覽器未允許自動複製，請手動選取報告內容");}
+}
+function downloadAnalysisReport(){
+  const text=state.analysisReportText || "";
+  if (!text){toast("請先生成簡易分析報告");return;}
+  const blob=new Blob(["\ufeff"+text],{type:"text/plain;charset=utf-8"});
+  const url=URL.createObjectURL(blob), a=document.createElement("a");
+  const range=getDateRange();
+  a.href=url;
+  a.download=`${state.queryType === "human" ? "人時性" : "半成品"}_簡易分析報告_${range.start}_${range.end}.txt`;
+  document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 wireUI();
+$("generateReportBtn")?.addEventListener("click",generateSimpleAnalysisReport);
+$("copyReportBtn")?.addEventListener("click",copyAnalysisReport);
+$("downloadReportBtn")?.addEventListener("click",downloadAnalysisReport);
 loadAll().catch(e => {
   console.error(e);
   setDataStatus("資料讀取失敗");
