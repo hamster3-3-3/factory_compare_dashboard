@@ -442,7 +442,7 @@
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div class="text-base font-extrabold">簡易分析報告</div>
-          <div class="text-xs muted mt-1">依目前選擇的資料類型、工廠、溫層與時間範圍產生；並自動比較前一期間。</div>
+          <div class="text-xs muted mt-1">依目前選擇範圍比較前一期間；半成品報告包含KPI、改善、持續上升、新進前20與新品，各重點最多列3項。</div>
         </div>
         <button id="generateReportBtn" type="button" class="seg-btn active px-4 py-2">生成簡易分析報告</button>
       </div>
@@ -6729,38 +6729,97 @@ async function ensureAnalysisReportData(){
     try{
       await Promise.all(keys.map(async key=>{
         await ensureFactoryIndex(key);
-        const files=filesForMonthKeys(state.factories[key]?.files || [],monthKeys);
-        return loadFactoryFiles(key,files);
+        const target=state.factories[key];
+        const files=filesForMonthKeys(target?.files || [],monthKeys);
+        await loadFactoryFiles(key,files);
+        if (!target?.files?.length || files.some(file=>!target.loadedFiles.has(file))) throw new Error(`${FACTORIES[key].name}本期或前期資料未完整載入，請重新生成報告`);
+        // Only report generation scans history; ordinary dashboard loading stays lazy.
+        target.reportHistoryComplete=false;
+        for (let i=0;i<target.files.length;i++){
+          const file=target.files[i];
+          if (!target.loadedFiles.has(file)){
+            const btn=$("generateReportBtn");
+            if (btn) btn.textContent=`確認新品歷史：${FACTORIES[key].name} ${i+1}/${target.files.length}`;
+            await loadFactoryFiles(key,[file],{deferDedupe:true});
+            await new Promise(resolve=>setTimeout(resolve,0));
+          }
+        }
+        dedupeFactoryData(target);
+        target.reportHistoryComplete=target.files.every(file=>target.loadedFiles.has(file));
       }));
     }finally{ state.halfForegroundLoading=false; }
   }
 }
+// Report ranking follows the site's product / semi-product aggregation, independent of table filters.
+function reportItemKey(row){ return `${safeStr(row.product).replace(/\s+/g,"")}||${safeStr(row.semi).replace(/\s+/g,"")}`; }
+function reportSemiKey(row){ return safeStr(row.semi).replace(/\s+/g,""); }
+function reportFinite(value){ return value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value)); }
+function reportRateChange(c,p,label){
+  if (!reportFinite(c) || !reportFinite(p)) return `${label}無可比較比率`;
+  const diff=(Number(c)-Number(p))*100;
+  if (Math.abs(diff)<0.0005) return `對比${label}持平`;
+  return `較${label}${fmtPct(p)}${diff>0?"上升":"下降"}${diff>0?"+":""}${diff.toFixed(3)}個百分點`;
+}
+function reportMoney(value){ return `${Math.round(Number(value)||0).toLocaleString("zh-TW")}元`; }
+function reportRankMap(rows,metric){
+  return new Map([...rows].filter(r=>Number(r[metric])>0).sort((a,b)=>b[metric]-a[metric]).slice(0,20).map((r,i)=>[reportItemKey(r),i+1]));
+}
+function reportItemLabel(row){ return `「${row.semi}」${row.product?`（${row.product}）`:""}`; }
 function halfAnalysisReport(){
-  const data=currentData();
-  const {label}=reportRangeLabel();
-  const lines=[];
-  const valid=[];
+  const data=currentData(), {cur,prev,label}=reportRangeLabel(), lines=[];
+  const metric=isPostMayOveruseLayout(data)?"overuseAmtB":"overuseAmt";
+  const rateKey=metric==="overuseAmtB"?"overuseNetRate":"overuseRate";
+  const period=({week:"兩週",month:"兩月",year:"兩年",day:"兩日"})[state.mode] || "兩期";
   for (const slot of data.slots || []){
-    const name=FACTORIES[slot.key]?.name || slot.key;
-    const a=slot.agg || {}, p=slot.prevAgg || {};
-    const hasData=(slot.summaryRows?.length || 0)+(slot.detailRows?.length || 0)>0;
-    lines.push(`【${name}】`);
-    if (!hasData){ lines.push("目前區間無可分析資料。",""); continue; }
-    const topScrap=aggregateTopByProductSemi(slot.detailRows || [],"scrapAmt","all")[0];
-    const overMetric=isPostMayOveruseLayout(data)?"overuseAmtB":"overuseAmt";
-    const topOver=aggregateTopByProductSemi(slot.detailRows || [],overMetric,"all")[0];
-    lines.push(`營業額 ${fmtSalesWan(a.sales)}（${reportSignedChange(a.sales,p.sales).replace("前期",label)}）。`);
-    lines.push(`報廢金額 ${fmtMoney(a.scrapAmt)}，報廢率 ${fmtPct(a.scrapRate)}，${Number(a.scrapRate)<=0.0025?"符合":"未符合"} KPI 0.25%（${reportSignedChange(a.scrapAmt,p.scrapAmt).replace("前期",label)}）。`);
-    lines.push(`超用金額（多產－廢棄）${fmtMoney(a.overuseAmtB)}，超用率 ${fmtPct(a.overuseNetRate)}，${Number(a.overuseNetRate)<=0.0025?"符合":"未符合"} KPI 0.25%（${reportSignedChange(a.overuseAmtB,p.overuseAmtB).replace("前期",label)}）。`);
-    if (topScrap) lines.push(`主要報廢項目為「${topScrap.product || "—"}／${topScrap.semi || "—"}」，金額 ${fmtMoney(topScrap.scrapAmt)}。`);
-    if (topOver) lines.push(`主要超用項目為「${topOver.product || "—"}／${topOver.semi || "—"}」，金額 ${fmtMoney(topOver[overMetric])}。`);
-    lines.push("");
-    valid.push({key:slot.key,name,a});
-  }
-  if (valid.length>=2){
-    const lowScrap=[...valid].filter(x=>Number.isFinite(Number(x.a.scrapRate))).sort((x,y)=>x.a.scrapRate-y.a.scrapRate)[0];
-    const lowOver=[...valid].filter(x=>Number.isFinite(Number(x.a.overuseNetRate))).sort((x,y)=>x.a.overuseNetRate-y.a.overuseNetRate)[0];
-    lines.push(`【綜合比較】報廢率最低為${lowScrap?.name || "—"}（${fmtPct(lowScrap?.a.scrapRate)}）；超用率最低為${lowOver?.name || "—"}（${fmtPct(lowOver?.a.overuseNetRate)}）。`);
+    const f=state.factories[slot.key], a=slot.agg || {}, p=slot.prevAgg || {};
+    lines.push(`【${FACTORIES[slot.key]?.name || slot.key}】`);
+    if (!(slot.summaryRows?.length || slot.detailRows?.length)){lines.push("目前區間無可分析資料。","");continue;}
+    const hasPrev=(slot.prevSummaryRows?.length || 0)>0;
+    for (const [title,field] of [["報廢率","scrapRate"],["超用率","overuseNetRate"]]){
+      const v=a[field];
+      lines.push(`＞本期${title}${reportFinite(v)?fmtPct(v):"無資料"}，${reportFinite(v)?`${Number(v)<=0.0025?"符合":"未達"}KPI 0.25%設定`:"無法判定KPI"}；${hasPrev?reportRateChange(v,p[field],label):`${label}無可比較資料`}。`);
+    }
+    const current=aggregateTopByProductSemi(slot.detailRows || [],metric,"all",Infinity);
+    const previous=aggregateTopByProductSemi(prev?.start?filterByRange(f?.details || [],prev.start,prev.end):[],metric,"all",Infinity);
+    const cm=new Map(current.map(r=>[reportItemKey(r),r])), pm=new Map(previous.map(r=>[reportItemKey(r),r]));
+    const ranks={};
+    for (const m of [metric,"scrapAmt"]) ranks[m]={cur:reportRankMap(current,m),prev:reportRankMap(previous,m)};
+    const overRanks=ranks[metric];
+    const summary=(c,p,m)=>{
+      const k=reportItemKey(c || p), rc=ranks[m].cur.get(k), rp=ranks[m].prev.get(k);
+      const amount=Number(c?.[m] || 0), old=Number(p?.[m] || 0), diff=amount-old;
+      const rate=m==="scrapAmt"?"scrapRate":rateKey;
+      return `${reportItemLabel(c || p)}：${m==="scrapAmt"?"報廢":"超用"}${reportMoney(old)}→${reportMoney(amount)}（${diff>0?"+":""}${reportMoney(diff)}、${rp?`第${rp}`:"前期未入前20"}→${rc?`第${rc}`:"退出前20"}${reportFinite(p?.[rate])&&reportFinite(c?.[rate])?`、率${fmtPct(p[rate])}→${fmtPct(c[rate])}`:""}）`;
+    };
+    const section=(title,items,empty)=>{lines.push(title);lines.push(...(items.length?items.map(x=>`．${x}。`):[`．${empty}。`]));};
+    const improved=previous.filter(p=>overRanks.prev.has(reportItemKey(p)) && p[metric]>=2000).map(p=>({p,c:cm.get(reportItemKey(p))})).filter(({p,c})=>c && c[metric]<p[metric] && reportFinite(c[rateKey]) && reportFinite(p[rateKey]) && c[rateKey]<p[rateKey]).sort((x,y)=>y.p[metric]-x.p[metric]).slice(0,3);
+    section("一、金額下降改善之半成品：",improved.map(({c,p})=>summary(c,p,metric)),previous.length?"無前期超用金額至少2,000元、且金額及超用率同步下降的前20名品項":"前期無半成品明細，無法比較");
+    const rising=[], entrants=[];
+    for (const c of current){
+      const k=reportItemKey(c), p=pm.get(k), up=[], fresh=[];
+      for (const m of [metric,"scrapAmt"]){
+        if (!ranks[m].cur.has(k)) continue;
+        if (ranks[m].prev.has(k) && p && c[m]>p[m]) up.push(summary(c,p,m));
+        if (!ranks[m].prev.has(k)) fresh.push(`${m==="scrapAmt"?"報廢":"超用"}新進第${ranks[m].cur.get(k)}（${reportMoney(c[m])}、率${fmtPct(c[m==="scrapAmt"?"scrapRate":rateKey])}）`);
+      }
+      if (up.length) rising.push({text:up.join("；"),delta:Math.max(...[metric,"scrapAmt"].filter(m=>ranks[m].cur.has(k)&&ranks[m].prev.has(k)).map(m=>c[m]-p[m]))});
+      if (fresh.length) entrants.push({text:`${reportItemLabel(c)}：${fresh.join("＋")}`,amount:Math.max(...[metric,"scrapAmt"].filter(m=>ranks[m].cur.has(k)&&!ranks[m].prev.has(k)).map(m=>c[m]))});
+    }
+    section(`二、連續${period}存在且金額上升之半成品：`,rising.sort((a,b)=>b.delta-a.delta).slice(0,3).map(x=>x.text),previous.length?"無兩期皆在同類金額前20名且金額上升的品項":"前期無半成品明細，無法比較");
+    section("三、突然進入前20名之半成品：",previous.length?entrants.sort((a,b)=>b.amount-a.amount).slice(0,3).map(x=>x.text):[],previous.length?"無較前期新進超用／報廢前20名的品項":"前期無半成品明細，無法判定新進榜");
+    // A launch is the first observed semi-product date, not simply absence in the preceding ranking.
+    const first=new Map();
+    for (const r of f?.details || []){
+      const k=reportSemiKey(r);
+      if (k && r.date && r.date<=cur.end && (!first.has(k) || r.date<first.get(k))) first.set(k,r.date);
+    }
+    const newItems=current.filter(c=>{const d=first.get(reportSemiKey(c));return prev?.start && d>=prev.start && d<=prev.end;});
+    const focus=newItems.filter(c=>overRanks.cur.has(reportItemKey(c))).sort((a,b)=>b[metric]-a[metric]);
+    const newText=focus.slice(0,3).map(c=>`${reportItemLabel(c)}：首次出現${first.get(reportSemiKey(c))}；本期超用第${overRanks.cur.get(reportItemKey(c))}、${reportMoney(c[metric])}、率${fmtPct(c[rateKey])}`);
+    if (newItems.length && !focus.length) newText.push(`首次出現在${label}、本期仍有資料的新品共${new Set(newItems.map(reportSemiKey)).size}項，均未進入超用前20名；合計超用${reportMoney(newItems.reduce((n,r)=>n+Number(r[metric]||0),0))}`);
+    section("四、新品超用聚焦：",f?.reportHistoryComplete?newText:[],f?.reportHistoryComplete?"無首次出現在前一期間且本期仍有資料的新品":"歷史檔案未完整載入，暫無法確認新品");
+    const dates=(f?.details || []).map(r=>r.date).filter(d=>d&&d<=cur.end).sort();
+    lines.push(`註：排名依商品／半成品組合、全品項金額前20名；超用採${metric==="overuseAmtB"?"B（多產－報廢）":"A（多產）"}。新品依可取得歷史資料${dates[0] || "—"}起的首次半成品紀錄判定；未入前20不代表無超用。`,"");
   }
   return lines.join("\n").trim();
 }
