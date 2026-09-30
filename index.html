@@ -6908,6 +6908,7 @@ function reportRankMap(rows,metric){
   return new Map([...rows].filter(r=>Number(r[metric])>0).sort((a,b)=>b[metric]-a[metric]).slice(0,20).map((r,i)=>[reportItemKey(r),i+1]));
 }
 function reportItemLabel(row){ return `「${row.semi}」${row.product?`（${row.product}）`:""}`; }
+function reportIncludesSemi(row){ return !/飯$/.test(safeStr(row.semi).trim()); }
 function halfAnalysisReport(){
   const data=currentData(), {cur,prev,label}=reportRangeLabel(), lines=[];
   const metric=isPostMayOveruseLayout(data)?"overuseAmtB":"overuseAmt";
@@ -6928,8 +6929,8 @@ function halfAnalysisReport(){
       lines.push("半成品金額明細不完整，暫無法進行前20名比較，請重新讀取資料。","");
       continue;
     }
-    const current=aggregateTopByProductSemi(slot.detailRows || [],metric,"all",Infinity);
-    const previous=aggregateTopByProductSemi(prev?.start?filterByRange(f?.details || [],prev.start,prev.end):[],metric,"all",Infinity);
+    const current=aggregateTopByProductSemi((slot.detailRows || []).filter(reportIncludesSemi),metric,"all",Infinity);
+    const previous=aggregateTopByProductSemi(priorRows.filter(reportIncludesSemi),metric,"all",Infinity);
     const cm=new Map(current.map(r=>[reportItemKey(r),r])), pm=new Map(previous.map(r=>[reportItemKey(r),r]));
     const ranks={};
     for (const m of [metric,"scrapAmt"]) ranks[m]={cur:reportRankMap(current,m),prev:reportRankMap(previous,m)};
@@ -6938,29 +6939,29 @@ function halfAnalysisReport(){
       const k=reportItemKey(c || p), rc=ranks[m].cur.get(k), rp=ranks[m].prev.get(k);
       const amount=Number(c?.[m] || 0), old=Number(p?.[m] || 0), diff=amount-old;
       const rate=m==="scrapAmt"?"scrapRate":rateKey;
-      return `${reportItemLabel(c || p)}：${m==="scrapAmt"?"報廢":"超用"}${reportMoney(old)}→${reportMoney(amount)}（${diff>0?"+":""}${reportMoney(diff)}、${rp?`第${rp}`:"前期未入前20"}→${rc?`第${rc}`:"退出前20"}${reportFinite(p?.[rate])&&reportFinite(c?.[rate])?`、率${fmtPct(p[rate])}→${fmtPct(c[rate])}`:""}）`;
+      return `${reportItemLabel(c || p)}：${m==="scrapAmt"?"報廢":"超用"}${reportMoney(old)}→${reportMoney(amount)}（${diff>0?"+":""}${reportMoney(diff)}、${rp?`第${rp}`:"前期未入前20"}→${rc?`第${rc}`:"退出前20"}${reportFinite(p?.[rate])&&reportFinite(c?.[rate])?`、${m==="scrapAmt"?"報廢率":"超用率"}${fmtPct(p[rate])}→${fmtPct(c[rate])}`:""}）`;
     };
     const section=(title,items,empty)=>{lines.push(title);lines.push(...(items.length?items.map(x=>`．${x}。`):[`．${empty}。`]));};
-    const improved=previous.filter(p=>overRanks.prev.has(reportItemKey(p)) && p[metric]>=2000).map(p=>({p,c:cm.get(reportItemKey(p))})).filter(({p,c})=>c && c[metric]<p[metric] && reportFinite(c[rateKey]) && reportFinite(p[rateKey]) && c[rateKey]<p[rateKey]).sort((x,y)=>y.p[metric]-x.p[metric]).slice(0,3);
-    section("一、金額下降改善之半成品：",improved.map(({c,p})=>summary(c,p,metric)),previous.length?"無前期超用金額至少2,000元、且金額及超用率同步下降的前20名品項":"前期無半成品明細，無法比較");
+    const improved=previous.filter(p=>overRanks.prev.has(reportItemKey(p)) && (slot.key === "jinxin" || p[metric]>=2000)).map(p=>({p,c:cm.get(reportItemKey(p))})).filter(({p,c})=>c && c[metric]<p[metric] && reportFinite(c[rateKey]) && reportFinite(p[rateKey]) && c[rateKey]<p[rateKey]).sort((x,y)=>y.p[metric]-x.p[metric]).slice(0,3);
+    section("一、金額下降改善之半成品：",improved.map(({c,p})=>summary(c,p,metric)),priorRows.length?(slot.key === "jinxin"?"無超用金額及超用率同步下降的前20名品項":"無前期超用金額至少2,000元、且金額及超用率同步下降的前20名品項"):"前期無半成品明細，無法比較");
     const rising=[], entrants=[];
     for (const c of current){
       const k=reportItemKey(c), p=pm.get(k), up=[], fresh=[];
       for (const m of [metric,"scrapAmt"]){
         if (!ranks[m].cur.has(k)) continue;
         if (ranks[m].prev.has(k) && p && c[m]>p[m]) up.push(summary(c,p,m));
-        if (!ranks[m].prev.has(k)) fresh.push(`${m==="scrapAmt"?"報廢":"超用"}新進第${ranks[m].cur.get(k)}（${reportMoney(c[m])}、率${fmtPct(c[m==="scrapAmt"?"scrapRate":rateKey])}）`);
+        if (!ranks[m].prev.has(k)) fresh.push(`${m==="scrapAmt"?"報廢":"超用"}新進第${ranks[m].cur.get(k)}（${reportMoney(c[m])}、${m==="scrapAmt"?"報廢率":"超用率"}${fmtPct(c[m==="scrapAmt"?"scrapRate":rateKey])}）`);
       }
       if (up.length) rising.push({text:up.join("；"),delta:Math.max(...[metric,"scrapAmt"].filter(m=>ranks[m].cur.has(k)&&ranks[m].prev.has(k)).map(m=>c[m]-p[m]))});
       if (fresh.length) entrants.push({text:`${reportItemLabel(c)}：${fresh.join("＋")}`,amount:Math.max(...[metric,"scrapAmt"].filter(m=>ranks[m].cur.has(k)&&!ranks[m].prev.has(k)).map(m=>c[m]))});
     }
-    section(`二、連續${period}存在且金額上升之半成品：`,rising.sort((a,b)=>b.delta-a.delta).slice(0,3).map(x=>x.text),previous.length?"無兩期皆在同類金額前20名且金額上升的品項":"前期無半成品明細，無法比較");
-    section("三、突然進入前20名之半成品：",previous.length?entrants.sort((a,b)=>b.amount-a.amount).slice(0,3).map(x=>x.text):[],previous.length?"無較前期新進超用／報廢前20名的品項":"前期無半成品明細，無法判定新進榜");
+    section(`二、連續${period}存在且金額上升之半成品：`,rising.sort((a,b)=>b.delta-a.delta).slice(0,3).map(x=>x.text),priorRows.length?"無兩期皆在同類金額前20名且金額上升的品項":"前期無半成品明細，無法比較");
+    section("三、突然進入前20名之半成品：",priorRows.length?entrants.sort((a,b)=>b.amount-a.amount).slice(0,3).map(x=>x.text):[],priorRows.length?"無較前期新進超用／報廢前20名的品項":"前期無半成品明細，無法判定新進榜");
     // A launch is the first observed semi-product date, not simply absence in the preceding ranking.
     const first=f?.newItemFirstSeen || new Map();
     const newItems=current.filter(c=>{const d=first.get(reportSemiKey(c));return prev?.start && d>=prev.start && d<=prev.end;});
     const focus=newItems.filter(c=>overRanks.cur.has(reportItemKey(c))).sort((a,b)=>b[metric]-a[metric]);
-    const newText=focus.slice(0,3).map(c=>`${reportItemLabel(c)}：首次出現${first.get(reportSemiKey(c))}；本期超用第${overRanks.cur.get(reportItemKey(c))}、${reportMoney(c[metric])}、率${fmtPct(c[rateKey])}`);
+    const newText=focus.slice(0,3).map(c=>`${reportItemLabel(c)}：首次出現${first.get(reportSemiKey(c))}；本期超用第${overRanks.cur.get(reportItemKey(c))}、${reportMoney(c[metric])}、超用率${fmtPct(c[rateKey])}`);
     if (newItems.length && !focus.length) newText.push(`首次出現在${label}、本期仍有資料的新品共${new Set(newItems.map(reportSemiKey)).size}項，均未進入超用前20名；合計超用${reportMoney(newItems.reduce((n,r)=>n+Number(r[metric]||0),0))}`);
     section("四、新品超用聚焦：",f?.reportHistoryComplete?newText:[],f?.reportHistoryComplete?"無首次出現在前一期間且本期仍有資料的新品":"歷史檔案未完整載入，暫無法確認新品");
     lines.push("");
