@@ -641,7 +641,7 @@ function parseDate(v, yearHint=null){
   if (!raw) return null;
   // 支援「4月21日」、「04月21日」與「4/21」等舊表日期格式。
   let m = raw.match(/^(?:20\d{2}年)?(\d{1,2})月(\d{1,2})日?$/);
-  if (m && yearHint) return new Date(+yearHint, +m[1]-1, +m[2]);
+  if (m && yearHint && !/^20\d{2}年/.test(raw)) return new Date(+yearHint, +m[1]-1, +m[2]);
   let s = raw.replace(/\./g,"/").replace(/-/g,"/").replace(/年/g,"/").replace(/月/g,"/").replace(/日/g,"");
   m = s.match(/^(20\d{2})\/(\d{1,2})\/(\d{1,2})$/);
   if (m) return new Date(+m[1], +m[2]-1, +m[3]);
@@ -823,16 +823,35 @@ function currentYearFallback(){
   if (state && state.dateMax && /^20\d{2}/.test(state.dateMax)) return Number(state.dateMax.slice(0,4));
   return new Date().getFullYear();
 }
+// 年份只取檔案所在資料夾；檔名及畫面選擇不得覆蓋明確的資料夾年份。
+function fileFolderParts(path){
+  let value = safeStr(path);
+  try { value = decodeURIComponent(value); } catch (_) {}
+  return value.replace(/\\/g,"/").split("/").slice(0,-1);
+}
+function fileFolderYear(path){
+  const parts = fileFolderParts(path);
+  for (let i=parts.length-1; i>=0; i--){
+    const m = parts[i].match(/(?:^|[^\d])(20\d{2}|1\d{2})(?:年|年度)?(?=$|[^\d])/);
+    if (m) return Number(m[1]) < 2000 ? 1911 + Number(m[1]) : Number(m[1]);
+  }
+  return null;
+}
 function parseFileYearHint(fileName){
-  const s = safeStr(fileName);
-  let m = s.match(/(20\d{2})/);
-  if (m) return +m[1];
-  m = s.match(/(?:^|[^\d])(1\d{2})[.\/-](\d{1,2})[.\/-](\d{1,2})/);
-  if (m) return 1911 + +m[1];
-
-  // 有些新豐 / 長家檔名只有 0407-13、0609-15，沒有年份。
-  // 這類檔案仍需以目前選擇年度判定，否則會被月份篩選排除，或合計分頁無法轉成日期。
-  return currentYearFallback();
+  return fileFolderYear(fileName);
+}
+function datesFromFileFolder(rows, path){
+  const year = fileFolderYear(path);
+  const span = year ? parseFileSpanFromName(path) : null;
+  // 不改寫資料日期；日期年份與資料夾不符時直接排除，避免拿舊年度補新年度。
+  return (rows || []).filter(row => {
+    if (!validProductionDate(row?.date)) return false;
+    if (!year) return true;
+    const rowYear = Number(row.date.slice(0,4));
+    if (rowYear === year) return true;
+    return !!span && span.end.getFullYear() > year && rowYear === year+1 &&
+      row.date >= toISO(span.start) && row.date <= toISO(span.end);
+  });
 }
 function sheetNameToISO(sheetName, yearHint){
   const n = safeStr(sheetName).replace(/\s+/g,"");
@@ -855,12 +874,15 @@ function sheetNameToISO(sheetName, yearHint){
 
 function matchWasteFileSpan(fileName){
   const s = safeStr(fileName);
-  // Supports both old monthly half-product files and newer daily files:
-  // 2026-0401-0430..., 20260401-0430..., 2026/04/... (0401-0430).xlsx.
-  return s.match(/(20\d{2})-(\d{2})(\d{2})-(\d{2})(\d{2})/i)
-      || s.match(/(20\d{2})(\d{2})(\d{2})-(\d{2})(\d{2})/i)
-      || s.match(/^(20\d{2})\/(?:0[1-9]|1[0-2])\/.*?(\d{2})(\d{2})-(\d{2})(\d{2})/i)
-      || s.match(/^(20\d{2})\/(?:0[1-9]|1[0-2])\/.*?\((\d{2})(\d{2})-(\d{2})(\d{2})\)/i);
+  const year = parseFileYearHint(s);
+  if (!year) return null;
+  // 日期區間可取檔名，但年份一律取資料夾。
+  let m = s.match(/(?:20\d{2})[-._]?(\d{2})(\d{2})-(\d{2})(\d{2})/i);
+  if (!m) m = s.match(/(?:^|[^\d])(\d{2})(\d{2})\s*[-~～至]\s*(\d{2})(\d{2})(?!\d)/);
+  if (m) return [m[0], String(year), ...m.slice(1)];
+  m = s.match(/(?:20\d{2}|1\d{2})[年.\/-](\d{1,2})[月.\/-](\d{1,2})(?:日)?\s*[-~～至]\s*(?:(\d{1,2})[月.\/-])?(\d{1,2})/);
+  if (m) return [m[0], String(year), m[1], m[2], m[3] || m[1], m[4]];
+  return null;
 }
 
 function parseFileStartFromName(fileName){
@@ -941,6 +963,8 @@ function parseSummaryFromWB(wb, fileName){
   }
   function recoverSummaryDate(rawDate, rowOffset){
     let d = parseDate(rawDate, summaryYearHint);
+    if (d && d.getFullYear() >= 2000 && summaryYearHint && d.getFullYear() !== summaryYearHint &&
+        !(summaryFileSpan && summaryFileSpan.end.getFullYear() > summaryYearHint && dateWithinSpan(d, summaryFileSpan))) return null;
     if (d && d.getFullYear() >= 2000 && (!summaryFileSpan || dateWithinSpan(d, summaryFileSpan))) return d;
     if (summaryFileSpan){
       // 舊版月檔的日期欄有時只有 1~31；用檔名區間的年月還原日期。
@@ -1006,7 +1030,7 @@ function parseSummaryFromWB(wb, fileName){
       const b = ymToIndex(expYM);
       if (a != null && b != null && domYM !== expYM){
         const delta = b - a;
-        if (Math.abs(delta) <= 2){
+        if (domYM.slice(0,4) === expYM.slice(0,4) && Math.abs(delta) <= 2){
           for (const r of out) r.date = shiftISOByMonths(r.date, delta);
         }
       }
@@ -1346,38 +1370,26 @@ function parseDetailsFromWB(wb, fileNameOrMeta){
 
 function monthKeyFromFilePath(p, fallbackYear=null){
   const s = safeStr(p);
-  const padMonth = m => String(Number(m)).padStart(2,"0");
-
-  // Prefer explicit year/month folder structures: 2026/05/..., 2026/5/..., 2026-05/..., 2026_05/...
-  let m = s.match(/(?:^|[\/\-_])(20\d{2})[\/\-_](0?[1-9]|1[0-2])(?:[\/\-_]|月|$)/);
-  if (m) return `${m[1]}-${padMonth(m[2])}`;
-
-  // Common file names: 2026-0501-0531, 2026.0602-0608, 2026_0601_0622, 20260501-0531.
-  m = s.match(/(20\d{2})[.\-_\/]?(0[1-9]|1[0-2])\d{2}\D+(?:0?[1-9]|1[0-2])?\d{1,2}/);
-  if (m) return `${m[1]}-${m[2]}`;
-
-  // Date range written as 2026-05-01~05-31 / 2026/5/1-5/31.
-  m = s.match(/(20\d{2})[年.\-_\/](0?[1-9]|1[0-2])[月.\-_\/]\d{1,2}/);
-  if (m) return `${m[1]}-${padMonth(m[2])}`;
-
-  // Weekly report names such as 2026-6(W2), 2026-06(W2), 2026年6月.
-  m = s.match(/(20\d{2})[年.\-_\/]?(0?[1-9]|1[0-2])(?:月|[\s\-_]*[（(]?W\d|[\s\-_]*週)/i);
-  if (m) return `${m[1]}-${padMonth(m[2])}`;
-
-  // ROC year dates: 115.05.27 / 115-5-27 / 115/05/27.
-  m = s.match(/(?:^|[^\d])(1\d{2})[.\/-](0?[1-9]|1[0-2])[.\/-]\d{1,2}/);
-  if (m) return `${1911 + Number(m[1])}-${padMonth(m[2])}`;
-
-  // If the path contains a year, or the UI already provides a target year, and the file name only contains month/day range, e.g. 0601-0622.xlsx.
-  const y = fallbackYear || parseFileYearHint(s);
-  if (y) {
-    m = s.match(/(?:^|[^\d])(0[1-9]|1[0-2])\d{2}\D+(?:0?[1-9]|1[0-2])?\d{1,2}/);
-    if (m) return `${y}-${m[1]}`;
-    m = s.match(/(?:^|[^\d])(0?[1-9]|1[0-2])月/);
-    if (m) return `${y}-${padMonth(m[1])}`;
+  const folderYear = fileFolderYear(s);
+  // 沒有年份資料夾時不依畫面年度或檔名猜測歸屬。
+  if (!folderYear) return null;
+  const year = folderYear;
+  const parts = fileFolderParts(s);
+  const padMonth = value => String(Number(value)).padStart(2,"0");
+  for (let i=parts.length-1; i>=0; i--){
+    const part = parts[i];
+    let m = part.match(/^(?:20\d{2}|1\d{2})(?:年|年度|[.\-_])+(0?[1-9]|1[0-2])(?:月|$)/);
+    if (!m) m = part.match(/^(0?[1-9]|1[0-2])月?$/);
+    if (m) return `${year}-${padMonth(m[1])}`;
   }
-
-  return null;
+  // 資料夾未標月份時僅使用檔名的月日，忽略檔名年份。
+  const name = s.replace(/\\/g,"/").split("/").at(-1);
+  let m = name.match(/(?:20\d{2}|1\d{2})[年.\-_\/](0?[1-9]|1[0-2])[月.\-_\/]\d{1,2}/);
+  if (!m) m = name.match(/(?:20\d{2})[.\-_]?(0[1-9]|1[0-2])\d{2}/);
+  if (!m) m = name.match(/(?:20\d{2}|1\d{2})[年.\-_]?(0?[1-9]|1[0-2])(?:月|[\s\-_]*[（(]?W\d|[\s\-_]*週)/i);
+  if (!m) m = name.match(/(?:^|[^\d])(0[1-9]|1[0-2])\d{2}\D+(?:0?[1-9]|1[0-2])?\d{1,2}/);
+  if (!m) m = name.match(/(?:^|[^\d])(0?[1-9]|1[0-2])月/);
+  return m ? `${year}-${padMonth(m[1])}` : null;
 }
 
 function monthKeysBetween(startISO, endISO){
@@ -1395,7 +1407,7 @@ function monthKeysBetween(startISO, endISO){
 }
 
 function recentMonthKeysFromManifest(files, count=3){
-  const keys = Array.from(new Set((files||[]).map(monthKeyFromFilePath).filter(Boolean))).sort();
+  const keys = Array.from(new Set((files||[]).map(p => monthKeyFromFilePath(p)).filter(Boolean))).sort();
   return keys.slice(Math.max(0, keys.length - count));
 }
 
@@ -1405,7 +1417,7 @@ function filesForMonthKeys(files, monthKeys){
   const fallbackYear = years.length === 1 ? Number(years[0]) : null;
 
   return (files || []).filter(p => {
-    // 一般情況：依檔名 / 路徑判定所屬月份。
+    // 依資料夾年份篩選；不借用另一年度的同月份檔案。
     const mk = monthKeyFromFilePath(p, fallbackYear);
     if (mk && set.has(mk)) return true;
 
@@ -1658,8 +1670,8 @@ async function loadFactoryFiles(key, files, options={}){
           try{
             const payload = await fetchDashboardJson(factory.baseUrl, jsonEntry);
             if (!Array.isArray(payload.summary) || (!Array.isArray(payload.halfDetails) && !Array.isArray(payload.details))) throw new Error("半成品 JSON 欄位不完整");
-            const details=halfPayloadDetailRows(payload);
-            target.summary.push(...payload.summary.filter(r=>validProductionDate(r.date)));
+            const details=datesFromFileFolder(halfPayloadDetailRows(payload),p);
+            target.summary.push(...datesFromFileFolder(payload.summary,p).filter(r=>validProductionDate(r.date)));
             target.details.push(...details);
             recordNewItemHistory(target,p,details,false,jsonEntry);
             loadedFromJson = true;
@@ -1669,8 +1681,8 @@ async function loadFactoryFiles(key, files, options={}){
         }
         if (!loadedFromJson){
           const wb = await fetchWorkbook(factory.baseUrl + "data/" + encodePath(p));
-          target.summary.push(...parseSummaryFromWB(wb, p).filter(r=>validProductionDate(r.date)));
-          const details=parseDetailsFromWB(wb,p).filter(r=>validProductionDate(r.date));
+          target.summary.push(...datesFromFileFolder(parseSummaryFromWB(wb, p),p).filter(r=>validProductionDate(r.date)));
+          const details=datesFromFileFolder(parseDetailsFromWB(wb,p),p).filter(r=>validProductionDate(r.date));
           target.details.push(...details);
           recordNewItemHistory(target,p,details,false);
         }
@@ -1807,7 +1819,7 @@ async function loadAll(){
 function buildGlobalDatesFromManifest(){
   const monthKeys = [];
   for (const k of ["jinxin","daxi"]){
-    monthKeys.push(...(state.factories[k].files || []).map(monthKeyFromFilePath).filter(Boolean));
+    monthKeys.push(...(state.factories[k].files || []).map(p => monthKeyFromFilePath(p)).filter(Boolean));
   }
   const uniq = Array.from(new Set(monthKeys)).sort();
   if (uniq.length){
@@ -2940,7 +2952,7 @@ async function loadAll(){
 function buildGlobalDatesFromManifest(){
   const monthKeys = [];
   const keys = selectedFactoryKeys().length ? selectedFactoryKeys() : allFactoryKeys();
-  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).map(monthKeyFromFilePath).filter(Boolean));
+  for (const k of keys) monthKeys.push(...(state.factories[k]?.files || []).map(p => monthKeyFromFilePath(p)).filter(Boolean));
   const uniq = Array.from(new Set(monthKeys)).sort();
   if (uniq.length){
     state.dateMin = `${uniq[0]}-01`;
@@ -4964,32 +4976,10 @@ function humanParseStoplineStats(grid){
 }
 
 function humanYearFromFile(path){
-  const name = humanBaseName(path);
-  let m = name.match(/^(1\d{2})(?=\D)/);
-  if (m) return 1911 + Number(m[1]);
-  m = name.match(/(20\d{2})/);
-  if (m) return Number(m[1]);
-  return currentYearFallback();
+  return parseFileYearHint(path);
 }
 function humanMonthKeyFromFilePath(path, fallbackYear=null){
-  const s = safeStr(path);
-  const name = humanBaseName(s);
-  let m = name.match(/^(1\d{2})[.\/_-](0?[1-9]|1[0-2])[.\/_-]\d{1,2}/);
-  if (m) return `${1911 + Number(m[1])}-${humanPad2(m[2])}`;
-  // 長家：115長家生產日報表(0801-0806).xlsx
-  m = name.match(/^(1\d{2}).*?[（(]\s*(0[1-9]|1[0-2])\d{2}\s*[-~～至]/);
-  if (m) return `${1911 + Number(m[1])}-${m[2]}`;
-  // ROC 年 + 月日，沒有分隔符號
-  m = name.match(/^(1\d{2})\D*?(0[1-9]|1[0-2])\d{2}\D/);
-  if (m) return `${1911 + Number(m[1])}-${m[2]}`;
-  // Gregorian paths / names
-  m = s.match(/(?:^|[\\/_-])(20\d{2})[\\/_-](0?[1-9]|1[0-2])(?:[\\/_-]|月|$)/);
-  if (m) return `${m[1]}-${humanPad2(m[2])}`;
-  m = name.match(/(20\d{2})[.\/_-]?(0[1-9]|1[0-2])\d{2}/);
-  if (m) return `${m[1]}-${m[2]}`;
-  // Last fallback: existing parser may understand additional naming patterns.
-  const old = monthKeyFromFilePath(s, fallbackYear || humanYearFromFile(s));
-  return old || null;
+  return monthKeyFromFilePath(path, fallbackYear);
 }
 function humanRecentMonthKeys(files, count=3){
   const keys = Array.from(new Set((files || []).map(p => humanMonthKeyFromFilePath(p)).filter(Boolean))).sort();
@@ -5453,9 +5443,11 @@ async function humanLoadFactoryFiles(key, files, options={}){
               throw firstErr;
             }
           }
-          parsed = humanParseWorkbook(wb, actualPath, key);
+          parsed = humanParseWorkbook(wb, path, key);
         }
-        target.rows.push(...(parsed?.rows || []));
+        parsed.rows = datesFromFileFolder(parsed?.rows || [],path);
+        parsed.itemRows = datesFromFileFolder(parsed?.itemRows || [],path);
+        target.rows.push(...parsed.rows);
         target.itemRows = target.itemRows || [];
         target.itemRows.push(...(parsed?.itemRows || []));
         recordNewItemHistory(target,path,parsed?.itemRows || [],true,loadedFromJson?jsonEntry:null);
@@ -6499,7 +6491,7 @@ function rebuildNewItemHistory(source){
   source.reportHistoryComplete=!!source.files?.length && source.files.every(file=>source.newItemHistoryRecords?.has(file));
 }
 function recordNewItemHistory(source,file,rows,human=false,entry=null){
-  const entries=firstSeenEntries(rows,human);
+  const entries=firstSeenEntries(datesFromFileFolder(rows,file),human);
   source.newItemHistoryRecords=source.newItemHistoryRecords || new Map();
   source.newItemHistoryRecords.set(file,entries);
   const key=newItemHistoryCacheKey(entry,human);
@@ -6514,6 +6506,7 @@ function restoreNewItemHistory(source,file,entry,human=false){
     if (!entries) entries=JSON.parse(localStorage.getItem(key));
     if (!Array.isArray(entries)||!entries.every(x=>Array.isArray(x)&&x.length===2&&typeof x[0]==="string"&&validProductionDate(x[1]))) return false;
     source.newItemHistoryRecords=source.newItemHistoryRecords || new Map();
+    entries=datesFromFileFolder(entries.map(([name,date])=>({name,date})),file).map(({name,date})=>[name,date]);
     source.newItemHistoryRecords.set(file,entries);
     rebuildNewItemHistory(source);
     return true;
