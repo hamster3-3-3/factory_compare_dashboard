@@ -436,7 +436,7 @@
     </section>
 
     <p id="dataSourceNote" class="muted text-xs mt-4 leading-relaxed">
-      資料讀取來源：優先使用新豐、大溪、長家、晉欣原網站自動產生的 <code>data/json-manifest.json</code> 與精簡 JSON；若 JSON 尚未產生或版本不符，才回退讀取 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
+      版本：20261008-H2（人時性月份修正）｜資料讀取來源：優先使用新豐、大溪、長家、晉欣原網站自動產生的 <code>data/json-manifest.json</code> 與精簡 JSON；若 JSON 尚未產生或版本不符，才回退讀取 Excel。若 GitHub Pages 網址或 repo 名稱改變，請調整此 HTML 內的 <code>FACTORIES</code> 設定。
     </p>
 
     <section class="card p-5 mt-4" id="analysisReportSection">
@@ -775,7 +775,8 @@ function loadScript(src){
 
 async function fetchJSON(url){
   // 索引仍向伺服器確認是否更新，但可沿用 ETag / Last-Modified，避免每次完整重抓。
-  const r = await fetch(url, {cache:"no-cache"});
+  const freshUrl = url + (url.includes("?") ? "&" : "?") + "indexReload=" + Date.now();
+  const r = await fetch(freshUrl, {cache:"no-store"});
   if (!r.ok) throw new Error(`讀取失敗 ${r.status}: ${url}`);
   return await r.json();
 }
@@ -4976,18 +4977,30 @@ function humanParseStoplineStats(grid){
 }
 
 function humanYearFromFile(path){
-  return parseFileYearHint(path);
+  const folderYear = fileFolderYear(path);
+  if (folderYear) return folderYear;
+  // 人時性舊站直接將月檔放在 data 根目錄，沒有年份資料夾。
+  // 只接受檔名開頭明確標示的年度，不使用畫面年度或系統當年補值。
+  const name = humanBaseName(path);
+  const match = name.match(/^(20\d{2}|1\d{2})(?=[.年_\-]|[^\d])/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return year < 2000 ? year + 1911 : year;
+}
+function humanDatedFilePath(path){
+  const year = humanYearFromFile(path);
+  return !fileFolderYear(path) && year ? `${year}/${humanBaseName(path)}` : path;
 }
 function humanMonthKeyFromFilePath(path, fallbackYear=null){
-  return monthKeyFromFilePath(path, fallbackYear);
+  return monthKeyFromFilePath(humanDatedFilePath(path));
 }
 function humanRecentMonthKeys(files, count=3){
   const keys = Array.from(new Set((files || []).map(p => humanMonthKeyFromFilePath(p)).filter(Boolean))).sort();
   return keys.slice(Math.max(0, keys.length - count));
 }
 function humanFilesForMonthKeys(files, monthKeys){
-  const set = new Set(monthKeys || []);
-  return (files || []).filter(p => set.has(humanMonthKeyFromFilePath(p)));
+  // 共用跨月區間判定，保留原始路徑供 JSON / Excel 載入。
+  return (files || []).filter(p => filesForMonthKeys([humanDatedFilePath(p)], monthKeys).length > 0);
 }
 function humanIsWorkbook(path){
   const name = humanBaseName(path);
@@ -5445,8 +5458,8 @@ async function humanLoadFactoryFiles(key, files, options={}){
           }
           parsed = humanParseWorkbook(wb, path, key);
         }
-        parsed.rows = datesFromFileFolder(parsed?.rows || [],path);
-        parsed.itemRows = datesFromFileFolder(parsed?.itemRows || [],path);
+        parsed.rows = datesFromFileFolder(parsed?.rows || [],humanDatedFilePath(path));
+        parsed.itemRows = datesFromFileFolder(parsed?.itemRows || [],humanDatedFilePath(path));
         target.rows.push(...parsed.rows);
         target.itemRows = target.itemRows || [];
         target.itemRows.push(...(parsed?.itemRows || []));
@@ -5748,7 +5761,10 @@ function startHumanBackgroundLoad(){
 async function ensureHumanDataForCurrentRange(){
   const selected=selectedFactoryKeys();
   if (!selected.length) return;
+  const keep = captureTimeSelection();
   await Promise.all(selected.map(k=>ensureHumanFactoryIndex(k)));
+  // 索引可能在首次讀取失敗後才成功；每次前景查詢都依完整索引同步選單。
+  humanBuildSelectors(keep);
   const monthKeys=getNeededMonthKeys();
   if (!monthKeys.length) return;
   const plans=selected.map(key=>({key,files:humanFilesForMonthKeys(state.humanFactories[key]?.files || [],monthKeys)}));
@@ -5768,7 +5784,10 @@ async function ensureHumanDataForCurrentRange(){
   }
 
   if (total) setDataStatus("人時性｜目前選擇期間資料已載入完成", {progress:100});
-  else setDataStatus("人時性｜目前選擇期間沒有可載入的資料", {progress:100});
+  else {
+    const missingIndex = selected.some(key => !(state.humanFactories[key]?.files || []).length);
+    setDataStatus(missingIndex ? "人時性｜資料索引未成功載入，請重新讀取資料" : "人時性｜目前選擇期間沒有可載入的資料", {progress:100});
+  }
 }
 
 function humanMetricLabel(metric){
