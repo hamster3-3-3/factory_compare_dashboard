@@ -838,11 +838,24 @@ function fileFolderYear(path){
   }
   return null;
 }
+function fileNameYear(path){
+  let name = safeStr(path).replace(/\\/g,"/").split("/").at(-1);
+  try { name = decodeURIComponent(name); } catch (_) {}
+  // 檔名開頭的民國年是該檔資料年度，例如 114→2025、115→2026。
+  // 亦支援檔名直接以西元年開頭；避免資料夾年份覆蓋檔名明確年度。
+  const m = name.match(/^(20\d{2}|1\d{2})(?=$|[^\d]|\d{4})/);
+  if (!m) return null;
+  const year = Number(m[1]);
+  return year < 2000 ? year + 1911 : year;
+}
+function fileYearFromPath(path){
+  return fileNameYear(path) || fileFolderYear(path);
+}
 function parseFileYearHint(fileName){
-  return fileFolderYear(fileName);
+  return fileYearFromPath(fileName);
 }
 function datesFromFileFolder(rows, path){
-  const year = fileFolderYear(path);
+  const year = fileYearFromPath(path);
   const span = year ? parseFileSpanFromName(path) : null;
   // 不改寫資料日期；日期年份與資料夾不符時直接排除，避免拿舊年度補新年度。
   return (rows || []).filter(row => {
@@ -1371,10 +1384,9 @@ function parseDetailsFromWB(wb, fileNameOrMeta){
 
 function monthKeyFromFilePath(p, fallbackYear=null){
   const s = safeStr(p);
-  const folderYear = fileFolderYear(s);
-  // 沒有年份資料夾時不依畫面年度或檔名猜測歸屬。
-  if (!folderYear) return null;
-  const year = folderYear;
+  const year = fileYearFromPath(s);
+  // 優先採用檔名開頭明確標示的年度，其次才讀取資料夾年度；不以畫面年度補值。
+  if (!year) return null;
   const parts = fileFolderParts(s);
   const padMonth = value => String(Number(value)).padStart(2,"0");
   for (let i=parts.length-1; i>=0; i--){
@@ -4977,15 +4989,8 @@ function humanParseStoplineStats(grid){
 }
 
 function humanYearFromFile(path){
-  const folderYear = fileFolderYear(path);
-  if (folderYear) return folderYear;
-  // 人時性舊站直接將月檔放在 data 根目錄，沒有年份資料夾。
-  // 只接受檔名開頭明確標示的年度，不使用畫面年度或系統當年補值。
-  const name = humanBaseName(path);
-  const match = name.match(/^(20\d{2}|1\d{2})(?=[.年_\-]|[^\d])/);
-  if (!match) return null;
-  const year = Number(match[1]);
-  return year < 2000 ? year + 1911 : year;
+  // 檔名開頭年度優先，資料夾年度僅作為檔名未標年時的備援。
+  return fileYearFromPath(path);
 }
 function humanDatedFilePath(path){
   const year = humanYearFromFile(path);
